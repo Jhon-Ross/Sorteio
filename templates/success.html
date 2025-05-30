@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Compra Concluída</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='assets/css/style.css') }}">
+</head>
+
+<body>
+    <div class="container">
+        <h1>Compra Concluída!</h1>
+        <p>Seus números da sorte são:</p>
+        <ul>
+            {% for token in tokens %}
+            <li>{{ token }}</li>
+            {% endfor %}
+        </ul>
+        <p>Enviamos também para o seu e-mail.</p>
+    </div>
+</body>
+
+</html>

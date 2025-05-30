@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sorteio do Carro</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='assets/css/style.css') }}">
+    <script src="https://sdk.mercadopago.com/js/v2"></script>
+</head>
+
+<body>
+    <div class="container">
+        <img src="{{ url_for('static', filename='assets/img/carro.jpg') }}" alt="Carro do Sorteio" class="car-img">
+        <button id="comprarBtn">Comprar</button>
+    </div>
+
+    <!-- Modal -->
+    <div class="modal" id="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h2>Participe do Sorteio!</h2>
+
+            <img src="{{ url_for('static', filename='assets/img/ticket.png') }}" alt="Ticket do Sorteio"
+                class="ticket-img">
+
+            <div class="quantity-selector">
+                <button id="decreaseQuantity">-</button>
+                <span id="quantity">1</span>
+                <button id="increaseQuantity">+</button>
+            </div>
+
+            <p>Valor total: <span id="valorTotal">R$10,00</span></p>
+
+            <div id="formSection">
+                <h2>Informações para Participação</h2>
+                <input type="text" id="nome" placeholder="Nome completo (ex: João da Silva)" required>
+                <input type="email" id="email" placeholder="E-mail (ex: joao@email.com)" required>
+                <input type="text" id="cpf" placeholder="CPF (ex: 12345678900)" required>
+                <input type="text" id="telefone" placeholder="Telefone (ex: 11912345678)" required>
+                <button id="confirmarDados">Continuar</button>
+                <div id="formMessage" class="hidden"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='assets/js/script.js') }}"></script>
+</body>
+
+</html>
