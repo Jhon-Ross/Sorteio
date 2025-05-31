@@ -8,7 +8,6 @@ import requests
 import json
 import mercadopago
 import psycopg2
-import psycopg2.extras
 
 # Carrega as variáveis do ambiente do arquivo .env
 load_dotenv()
@@ -250,9 +249,14 @@ def create_preference():
         "identification": {"type": "CPF", "number": cpf},
         "phone": {"area_code": phone[:2] if len(phone) >= 10 else "", "number": phone[2:] if len(phone) >= 10 else phone}
     }
+    # Definição robusta do base_url para produção Vercel
     base_url = os.getenv('VERCEL_URL', 'http://127.0.0.1:5000')
+    if base_url and not base_url.startswith('http'):
+        base_url = f'https://{base_url}'
     if base_url.startswith('http://127.0.0.1'):
-        logging.warning("Usando URL base local. Webhook do Mercado Pago pode não funcionar sem um túnel (ex: ngrok).")
+        logging.warning("Usando URL base local (http://127.0.0.1:5000). Webhook do Mercado Pago e retornos automáticos podem não funcionar corretamente sem um túnel HTTPS público (ex: ngrok) ou deploy.")
+    else:
+        logging.info(f"Usando base_url: {base_url} para URLs do Mercado Pago.")
 
     preference_data = {
         "items": [item],
@@ -426,3 +430,6 @@ if __name__ == '__main__':
     # ... (suas verificações e logs)
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
+# (Railway não é referenciado no app.py, mas pode haver arquivos railway.json ou variáveis relacionadas)
+# Nenhuma referência Railway encontrada neste arquivo.
