@@ -397,32 +397,6 @@ def success():
 
 
 if __name__ == '__main__':
-    logging.info("🚀 Iniciando a aplicação Flask...")
-
-    # Realiza as verificações de segurança ao iniciar
-    logging.info("🛡️ Realizando verificações de segurança da aplicação...")
-    if not os.path.exists('tokens.csv'):
-        logging.critical("🚨 Erro Crítico: O arquivo 'tokens.csv' não foi encontrado. A aplicação não pode funcionar sem ele.")
-    else:
-        logging.info("🔍 Verificação: 'tokens.csv' encontrado.")
-
-    if not available_tokens:
-        logging.critical("🚫 Erro Crítico: Nenhum token foi carregado do 'tokens.csv'. Verifique o conteúdo do arquivo.")
-    else:
-        logging.info(f"📊 Verificação: {len(available_tokens)} tokens carregados de 'tokens.csv'.")
-
-    # Chama a função de verificação do e-mail
-    email_service_ok = check_email_service()
-
-    if email_service_ok:
-        send_discord_notification(
-            "🌟 O sistema do Sorteio do Carro está online e pronto para receber pedidos! 🎉",
-            color=3066993
-        )
-    else:
-        send_discord_notification(
-            "🚨 ATENÇÃO: O sistema do Sorteio do Carro está online, MAS a configuração de e-mail falhou. Verifique os logs do servidor!",
-            color=15158332
-        )
-
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    # ... (suas verificações e logs)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=True)
