@@ -155,8 +155,8 @@ def send_discord_notification(message, color=None):
 
 @app.route('/')
 def index():
-    logging.info("🌐 Requisição recebida para a página inicial ('/').")
-    return render_template('index.html')
+    logging.info("🌐 Teste: Rota / acessada.")
+    return "Olá da Vercel! A rota principal funciona."
 
 @app.route('/create_preference', methods=['POST'])
 def create_preference():
