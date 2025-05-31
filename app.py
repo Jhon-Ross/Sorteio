@@ -202,12 +202,12 @@ def create_preference():
         "items": [item],
         "payer": payer,
         "external_reference": order_id, # Usado para linkar o pagamento do MP com sua compra interna
-        "notification_url": f"https://seuservidor.com.br/mercadopago_webhook", # Sua URL para receber notificações do MP
+        "notification_url": f"https://sorteio-production.up.railway.app/mercadopago_webhook", # Sua URL para receber notificações do MP
         "auto_return": "all", # Retorna sempre, independente do status
         "back_urls": {
-            "success": f"https://seuservidor.com.br/payment_status?status=success&order_id={order_id}",
-            "pending": f"https://seuservidor.com.br/payment_status?status=pending&order_id={order_id}",
-            "failure": f"https://seuservidor.com.br/payment_status?status=failure&order_id={order_id}"
+            "success": f"https://sorteio-production.up.railway.app/payment_status?status=success&order_id={order_id}",
+            "pending": f"https://sorteio-production.up.railway.app/payment_status?status=pending&order_id={order_id}",
+            "failure": f"https://sorteio-production.up.railway.app/payment_status?status=failure&order_id={order_id}"
         }
     }
 
