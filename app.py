@@ -1,13 +1,14 @@
 import os
 import logging
 from dotenv import load_dotenv
-from flask import Flask, render_template, request, jsonify # Importe request e jsonify
+from flask import Flask, render_template, request, jsonify
 from flask_mail import Mail, Message
-import csv
 import random
 import requests
 import json
-import mercadopago # Importe a SDK do Mercado Pago
+import mercadopago
+import psycopg2
+import psycopg2.extras
 
 # Carrega as variáveis do ambiente do arquivo .env
 load_dotenv()
@@ -36,30 +37,41 @@ DISCORD_WEBHOOK_URL = os.getenv('DISCORD_WEBHOOK_URL')
 # https://www.mercadopago.com.br/developers/panel/credentials
 app.config['MP_ACCESS_TOKEN'] = os.getenv('MP_ACCESS_TOKEN') # Seu Access Token do Mercado Pago
 
-# Função para carregar tokens de forma lazy
-_available_tokens = None
-_used_tokens = set()
-def get_tokens():
-    global _available_tokens
-    if _available_tokens is None:
-        _available_tokens = []
-        try:
-            with open('tokens.csv', 'r') as csvfile:
-                reader = csv.reader(csvfile)
-                next(reader)
-                for row in reader:
-                    if row:
-                        _available_tokens.append(row[0])
-            logging.info(f"✅ Tokens carregados com sucesso! Total de {len(_available_tokens)} tokens disponíveis.")
-        except FileNotFoundError:
-            logging.error(f"❌ Erro: Arquivo 'tokens.csv' não encontrado.")
-        except Exception as e:
-            logging.error(f"⚠️ Erro ao carregar tokens do CSV: {e}")
-    return _available_tokens
+# Configuração do banco de dados PostgreSQL
+DATABASE_URL = os.getenv('POSTGRES_URL')
 
-def get_used_tokens():
-    global _used_tokens
-    return _used_tokens
+def get_db_connection():
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        return conn
+    except Exception as e:
+        logging.error(f"❌ Erro ao conectar ao banco de dados: {e}")
+        raise
+
+def contar_tokens_disponiveis_db():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT COUNT(id) FROM Tokens WHERE disponivel = TRUE;")
+        count = cur.fetchone()[0]
+        return count
+    finally:
+        cur.close()
+        conn.close()
+
+def selecionar_tokens_aleatorios_db(quantidade):
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+    try:
+        cur.execute(
+            "SELECT id, numero_token FROM Tokens WHERE disponivel = TRUE ORDER BY RANDOM() LIMIT %s;",
+            (quantidade,)
+        )
+        tokens_selecionados = cur.fetchall()
+        return tokens_selecionados
+    finally:
+        cur.close()
+        conn.close()
 
 # Função robusta para configurar Flask-Mail
 mail = None
@@ -148,110 +160,126 @@ def index():
 
 @app.route('/create_preference', methods=['POST'])
 def create_preference():
-    logging.info("🛒 Requisição POST recebida para '/create_preference' para criar preferência de pagamento.")
+    logging.info("🛒 Requisição POST recebida para '/create_preference'.")
     data = request.get_json()
-    name = data.get('name')
+    nome = data.get('name')
     email = data.get('email')
     cpf = data.get('cpf')
     phone = data.get('phone')
     quantity = data.get('quantity')
-    valor_unitario = 10.00 # Certifique-se que este valor está consistente com o frontend
+    valor_unitario = 10.00
 
-    if not all([name, email, cpf, phone, quantity]):
-        logging.warning("⚠️ Validação de dados para preferência de pagamento falhou: Campos obrigatórios ausentes.")
-        return jsonify({'success': False, 'message': 'Todos os campos são obrigatórios para gerar o pagamento!'}), 400
+    if not all([nome, email, cpf, phone, quantity]):
+        logging.warning("⚠️ Validação falhou: Campos obrigatórios ausentes.")
+        return jsonify({'success': False, 'message': 'Todos os campos são obrigatórios!'}), 400
 
-    if not isinstance(quantity, int) or quantity <= 0:
-        logging.warning(f"⚠️ Validação de dados para preferência de pagamento falhou: Quantidade inválida recebida: {quantity}")
+    if not isinstance(quantity, int) or not (1 <= quantity <= 2500):
+        logging.warning(f"⚠️ Validação falhou: Quantidade inválida: {quantity}")
         return jsonify({'success': False, 'message': 'Quantidade inválida!'}), 400
 
-    total_amount = float(quantity * valor_unitario)
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        conn.autocommit = False
 
-    # Atribui os tokens temporariamente para esta compra
-    # IMPORTANT: Estes tokens SÓ SERÃO MARCADO COMO USADOS DEFINITIVAMENTE APÓS O PAGAMENTO SER APROVADO VIA IPN
-    assigned_tokens = []
-    temp_available_for_purchase = list(set(get_tokens()) - get_used_tokens())
+        cur.execute("SELECT COUNT(id) FROM Tokens WHERE disponivel = TRUE;")
+        tokens_disponiveis_count = cur.fetchone()['count']
+        if tokens_disponiveis_count < quantity:
+            conn.rollback()
+            logging.warning(f"⚠️ Tokens insuficientes. Solicitados: {quantity}, Disponíveis: {tokens_disponiveis_count}")
+            return jsonify({'success': False, 'message': 'Não há tokens suficientes disponíveis no momento.'}), 400
 
-    if len(temp_available_for_purchase) < quantity:
-        logging.warning(f"⚠️ Não há tokens únicos suficientes disponíveis para criar a preferência ({quantity} solicitados).")
-        return jsonify({'success': False, 'message': 'Não há tokens suficientes disponíveis para esta quantidade no momento.'}), 400
+        cur.execute(
+            "SELECT id, numero_token FROM Tokens WHERE disponivel = TRUE ORDER BY RANDOM() LIMIT %s FOR UPDATE;",
+            (quantity,)
+        )
+        tokens_selecionados_rows = cur.fetchall()
+        if len(tokens_selecionados_rows) < quantity:
+            conn.rollback()
+            logging.warning(f"⚠️ Não foi possível selecionar/reservar tokens suficientes. Solicitados: {quantity}, Selecionados: {len(tokens_selecionados_rows)}")
+            return jsonify({'success': False, 'message': 'Não foi possível reservar os tokens necessários. Tente novamente.'}), 500
 
-    # Seleciona tokens para esta preferência (ainda não marcados como usados globalmente)
-    for _ in range(quantity):
-        token = random.choice(temp_available_for_purchase)
-        assigned_tokens.append(token)
-        temp_available_for_purchase.remove(token) # Remove da lista temporária para evitar duplicidade NESTA preferência
+        assigned_token_ids = [str(row['id']) for row in tokens_selecionados_rows]
+        assigned_token_numeros = [row['numero_token'] for row in tokens_selecionados_rows]
+        order_id_interno = f"SORTEIO-{random.randint(1000000, 9999999)}"
+        total_amount = float(quantity * valor_unitario)
 
-    # Cria o item para o Mercado Pago
+        cur.execute("""
+            INSERT INTO Adquiridos (
+                order_id_interno, nome_cliente, email_cliente, cpf_cliente, telefone_cliente,
+                quantidade, tokens_ids_db, tokens_numeros_db, status_compra, total_pago, data_criacao_pedido, data_ultima_atualizacao
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            RETURNING id;
+        """,
+        (
+            order_id_interno, nome, email, cpf, phone, quantity,
+            ','.join(assigned_token_ids), ','.join(assigned_token_numeros),
+            'pending', total_amount
+        ))
+        adquiridos_id = cur.fetchone()['id']
+        logging.info(f"Pedido pendente ID {adquiridos_id} (Order: {order_id_interno}) inserido no banco com {quantity} tokens: {', '.join(assigned_token_numeros)}")
+        conn.commit()
+
+    except psycopg2.Error as db_err:
+        if conn:
+            conn.rollback()
+        logging.error(f"❌ Erro de Banco de Dados em /create_preference: {db_err}")
+        return jsonify({'success': False, 'message': 'Erro ao processar seu pedido. Tente novamente mais tarde.'}), 500
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logging.error(f"❌ Erro Geral em /create_preference: {e}")
+        return jsonify({'success': False, 'message': 'Ocorreu um erro inesperado. Tente novamente.'}), 500
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.autocommit = True
+            conn.close()
+
     item = {
-        "title": f"Números da Sorte para Sorteio do Carro ({quantity} un.)",
-        "quantity": 1, # Quantidade de "item" no Mercado Pago, não o número de números da sorte
+        "title": f"Números da Sorte ({quantity} un.) - Pedido {order_id_interno}",
+        "quantity": 1,
         "unit_price": total_amount,
-        "currency_id": "BRL",
-        "picture_url": "https://example.com/ticket.png" # Substitua pela URL da sua imagem do bilhete
+        "currency_id": "BRL"
     }
-
-    # Dados do pagador (para preencher automaticamente no MP)
     payer = {
-        "name": name,
-        "surname": "", # Mercado Pago geralmente usa apenas o nome
-        "email": email,
-        "identification": {
-            "type": "CPF",
-            "number": cpf
-        },
-        "phone": {
-            "area_code": phone[:2] if len(phone) >= 10 else "",
-            "number": phone[2:] if len(phone) >= 10 else phone
-        }
+        "name": nome, "email": email,
+        "identification": {"type": "CPF", "number": cpf},
+        "phone": {"area_code": phone[:2] if len(phone) >= 10 else "", "number": phone[2:] if len(phone) >= 10 else phone}
     }
+    base_url = os.getenv('VERCEL_URL', 'http://127.0.0.1:5000')
+    if base_url.startswith('http://127.0.0.1'):
+        logging.warning("Usando URL base local. Webhook do Mercado Pago pode não funcionar sem um túnel (ex: ngrok).")
 
-    # Gera um ID único para esta transação ANTES de chamar o Mercado Pago
-    # Usaremos este ID para rastrear a compra pendente
-    order_id = f"ORDER-{random.randint(100000, 999999)}"
-
-    # Armazena os dados da compra em pending_payments_data, com status "pending"
-    # Este 'order_id' será o 'external_reference' do Mercado Pago
-    pending_payments_data[order_id] = {
-        'name': name,
-        'email': email,
-        'cpf': cpf,
-        'phone': phone,
-        'quantity': quantity,
-        'assigned_tokens': assigned_tokens,
-        'status': 'pending', # Estado inicial da compra
-        'total_amount': total_amount
-    }
-    logging.info(f"Dados da compra pendente armazenados para Order ID: {order_id}")
-
-    # Cria a preferência de pagamento no Mercado Pago
     preference_data = {
         "items": [item],
         "payer": payer,
-        "external_reference": order_id, # Usado para linkar o pagamento do MP com sua compra interna
-        "notification_url": f"https://sorteio-production.up.railway.app/mercadopago_webhook", # Sua URL para receber notificações do MP
-        "auto_return": "all", # Retorna sempre, independente do status
+        "external_reference": order_id_interno,
+        "notification_url": f"{base_url}/mercadopago_webhook",
+        "auto_return": "all",
         "back_urls": {
-            "success": f"https://sorteio-production.up.railway.app/payment_status?status=success&order_id={order_id}",
-            "pending": f"https://sorteio-production.up.railway.app/payment_status?status=pending&order_id={order_id}",
-            "failure": f"https://sorteio-production.up.railway.app/payment_status?status=failure&order_id={order_id}"
+            "success": f"{base_url}/payment_status?status=success&order_id={order_id_interno}",
+            "pending": f"{base_url}/payment_status?status=pending&order_id={order_id_interno}",
+            "failure": f"{base_url}/payment_status?status=failure&order_id={order_id_interno}"
         }
     }
 
     try:
         sdk = get_mp_sdk()
+        if not sdk:
+            return jsonify({'success': False, 'message': 'Erro na configuração do sistema de pagamento.'}), 500
         preference_response = sdk.preference().create(preference_data)
         preference = preference_response["response"]
-        payment_link = preference["init_point"] # Link para o checkout do Mercado Pago
-        logging.info(f"Preferência de pagamento criada com sucesso. ID: {preference['id']}")
+        payment_link = preference["init_point"]
+        logging.info(f"Preferência MP criada para Order ID {order_id_interno}. Link: {payment_link}")
         return jsonify({'success': True, 'payment_link': payment_link, 'preference_id': preference['id']})
 
-    except Exception as e:
-        logging.error(f"❌ Erro ao criar preferência de pagamento no Mercado Pago: {e}")
-        # Remove a compra pendente se a criação da preferência falhar
-        if order_id in pending_payments_data:
-            del pending_payments_data[order_id]
-        return jsonify({'success': False, 'message': f'Erro ao iniciar pagamento: {str(e)}'}), 500
+    except Exception as e_mp:
+        logging.error(f"❌ Erro ao criar preferência no Mercado Pago para {order_id_interno}: {e_mp}")
+        return jsonify({'success': False, 'message': f'Erro ao iniciar pagamento com Mercado Pago. Tente mais tarde.'}), 500
 
 # Endpoint para receber notificações do Mercado Pago (IPN - Instant Payment Notification)
 # ESTA É A PARTE CRÍTICA PARA CONFIRMAR O PAGAMENTO!
@@ -259,155 +287,124 @@ def create_preference():
 def mercadopago_webhook():
     logging.info("🔔 Notificação de Mercado Pago Webhook recebida!")
     if request.method == 'GET':
-        # Mercado Pago faz um GET inicial para verificar o webhook
         logging.info(f"Webhook GET request: {request.args}")
-        # Você deve retornar 200 OK para o MP validar o webhook
         return "OK", 200
     elif request.method == 'POST':
-        notification_data = request.args # Dados da notificação geralmente vêm como query params
-        # Alternativamente, pode vir no corpo para "merchant_orders" ou "payments"
-        # notification_data = request.get_json() if request.is_json else request.form
-
-        topic = notification_data.get('topic') # Ex: 'payment', 'merchant_order'
-        resource_id = notification_data.get('id') # ID do recurso (pagamento, ordem, etc.)
-
+        notification_data = request.args
+        topic = notification_data.get('topic')
+        resource_id = notification_data.get('id')
         logging.info(f"Webhook POST request: Topic='{topic}', Resource ID='{resource_id}'")
-
         if topic == 'payment':
-            # Detalhes do pagamento
             sdk = get_mp_sdk()
-            payment_info = sdk.payment().get(resource_id)
-            payment_status = payment_info["response"]["status"]
-            external_reference = payment_info["response"]["external_reference"] # Nosso order_id
-
-            logging.info(f"Notificação de Pagamento - ID: {resource_id}, Status: {payment_status}, External Ref: {external_reference}")
-
-            if external_reference in pending_payments_data:
-                purchase_data = pending_payments_data[external_reference]
+            if not sdk:
+                logging.error('❌ SDK Mercado Pago não configurado.')
+                return "OK", 200
+            try:
+                payment_info = sdk.payment().get(resource_id)
+                payment_status = payment_info["response"].get("status")
+                external_reference = payment_info["response"].get("external_reference")
+                payment_id_mp = payment_info["response"].get("id")
+                logging.info(f"Notificação de Pagamento - ID: {resource_id}, Status: {payment_status}, External Ref: {external_reference}")
+                conn = get_db_connection()
+                cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+                cur.execute("SELECT * FROM Adquiridos WHERE order_id_interno = %s FOR UPDATE;", (external_reference,))
+                compra = cur.fetchone()
+                if not compra:
+                    logging.warning(f"⚠️ Pedido não encontrado para external_reference '{external_reference}' no banco.")
+                    cur.close()
+                    conn.close()
+                    return "OK", 200
                 if payment_status == 'approved':
-                    if purchase_data['status'] == 'pending': # Evita processar múltiplas vezes
+                    if compra['status_compra'] != 'approved':
                         logging.info(f"✅ Pagamento APROVADO para Order ID: {external_reference}. Processando compra.")
-                        # ATUALIZA O STATUS DA COMPRA
-                        purchase_data['status'] = 'approved'
-
-                        # ATRIBUI OS TOKENS DEFINITIVAMENTE (marca como usados)
-                        for token in purchase_data['assigned_tokens']:
-                            if token in get_tokens(): # Verifica se o token ainda está disponível
-                                get_used_tokens().add(token) # Marca como usado globalmente
-                                available_tokens.remove(token) # Remove do pool de disponíveis
-                                logging.info(f"Token '{token}' marcado como USADO para Order ID: {external_reference}.")
-                            else:
-                                logging.warning(f"⚠️ Token '{token}' (do pedido {external_reference}) não encontrado nos disponíveis ao aprovar o pagamento. Possível inconsistência ou uso prévio.")
-
-                        # Envia e-mails de confirmação (cliente e admin)
-                        customer_email_subject = "Detalhes da sua Compra Confirmada - Sorteio do Carro"
-                        customer_email_body = f"""
-                        Prezado(a) {purchase_data['name']},
-
-                        Seu pagamento foi CONFIRMADO com sucesso!
-                        Obrigado por participar do nosso sorteio!
-
-                        Aqui estão os detalhes da sua compra:
-                        Nome: {purchase_data['name']}
-                        Email: {purchase_data['email']}
-                        CPF: {purchase_data['cpf']}
-                        Telefone: {purchase_data['phone']}
-                        Quantidade de números da sorte: {purchase_data['quantity']}
-                        Seus números da sorte: {', '.join(purchase_data['assigned_tokens'])}
-
-                        Boa sorte!
-                        """
-                        admin_email_subject = f"✅ Compra Confirmada - Sorteio do Carro - {purchase_data['name']}"
-                        admin_email_body = f"""
-                        COMPRA CONFIRMADA!
-
-                        Cliente: {purchase_data['name']}
-                        Email do Cliente: {purchase_data['email']}
-                        CPF: {purchase_data['cpf']}
-                        Telefone: {purchase_data['phone']}
-                        Quantidade de números comprados: {purchase_data['quantity']}
-                        Tokens Atribuídos: {', '.join(purchase_data['assigned_tokens'])}
-                        Status do Pagamento (MP): APROVADO
-                        ID do Pagamento (MP): {resource_id}
-                        """
+                        # Atualiza status e payment_id_mp
+                        cur.execute("""
+                            UPDATE Adquiridos SET status_compra = 'approved', payment_id_mp = %s, data_ultima_atualizacao = CURRENT_TIMESTAMP
+                            WHERE order_id_interno = %s;
+                        """, (str(payment_id_mp), external_reference))
+                        # Marca tokens como usados
+                        token_ids = compra['tokens_ids_db'].split(',')
+                        cur.execute(f"UPDATE Tokens SET disponivel = FALSE WHERE id IN ({','.join(['%s']*len(token_ids))});", token_ids)
+                        conn.commit()
+                        # Envia e-mails e Discord
                         try:
-                            msg_customer = Message(customer_email_subject, recipients=[purchase_data['email']], body=customer_email_body)
-                            mail.send(msg_customer)
-                            logging.info(f"✅ E-mail de confirmação de compra APROVADA enviado para o cliente: {purchase_data['email']}.")
-
-                            msg_admin = Message(admin_email_subject, recipients=[app.config['MAIL_DEFAULT_SENDER']], body=admin_email_body)
-                            mail.send(msg_admin)
-                            logging.info(f"✅ E-mail de notificação de compra APROVADA enviado para o administrador.")
-
-                            discord_message = (
-                                f"🎉 COMPRA CONFIRMADA! 🎉\n"
-                                f"Cliente: **{purchase_data['name']}** ({purchase_data['email']})\n"
-                                f"Comprou: **{purchase_data['quantity']}** números\n"
-                                f"Total: **R${purchase_data['total_amount']:.2f}**\n"
-                                f"Tokens: `{', '.join(purchase_data['assigned_tokens'])}`\n"
-                                f"Status MP: APROVADO\n"
-                                f"ID Pagamento MP: `{resource_id}`"
+                            msg_customer = Message(
+                                "Detalhes da sua Compra Confirmada - Sorteio do Carro",
+                                recipients=[compra['email_cliente']],
+                                body=f"""
+Prezado(a) {compra['nome_cliente']},\n\nSeu pagamento foi CONFIRMADO com sucesso!\nObrigado por participar do nosso sorteio!\n\nAqui estão os detalhes da sua compra:\nNome: {compra['nome_cliente']}\nEmail: {compra['email_cliente']}\nCPF: {compra['cpf_cliente']}\nTelefone: {compra['telefone_cliente']}\nQuantidade de números da sorte: {compra['quantidade']}\nSeus números da sorte: {compra['tokens_numeros_db']}\n\nBoa sorte!\n"
                             )
-                            send_discord_notification(discord_message, color=3066993) # Cor verde de sucesso
-
+                            mail.send(msg_customer)
+                            msg_admin = Message(
+                                f"✅ Compra Confirmada - Sorteio do Carro - {compra['nome_cliente']}",
+                                recipients=[app.config['MAIL_DEFAULT_SENDER']],
+                                body=f"""
+COMPRA CONFIRMADA!\n\nCliente: {compra['nome_cliente']}\nEmail do Cliente: {compra['email_cliente']}\nCPF: {compra['cpf_cliente']}\nTelefone: {compra['telefone_cliente']}\nQuantidade de números comprados: {compra['quantidade']}\nTokens Atribuídos: {compra['tokens_numeros_db']}\nStatus do Pagamento (MP): APROVADO\nID do Pagamento (MP): {payment_id_mp}\n"
+                            )
+                            mail.send(msg_admin)
+                            discord_message = (
+                                f"🎉 COMPRA CONFIRMADA! 🎉\nCliente: **{compra['nome_cliente']}** ({compra['email_cliente']})\nComprou: **{compra['quantidade']}** números\nTotal: **R${compra['total_pago']:.2f}**\nTokens: `{compra['tokens_numeros_db']}`\nStatus MP: APROVADO\nID Pagamento MP: `{payment_id_mp}`"
+                            )
+                            send_discord_notification(discord_message, color=3066993)
                         except Exception as e:
-                            logging.error(f"❌ Erro ao enviar e-mails/Discord de confirmação de compra APROVADA para {purchase_data['email']}. Erro: {e}")
+                            logging.error(f"❌ Erro ao enviar e-mails/Discord de confirmação de compra APROVADA: {e}")
                     else:
-                        logging.info(f"ℹ️ Pagamento APROVADO para Order ID: {external_reference}, mas já processado anteriormente. Status: {purchase_data['status']}.")
-
+                        logging.info(f"ℹ️ Pagamento APROVADO para Order ID: {external_reference}, mas já processado anteriormente.")
                 elif payment_status == 'rejected':
-                    if purchase_data['status'] == 'pending':
-                        logging.warning(f"❌ Pagamento REJEITADO para Order ID: {external_reference}. Não processando compra.")
-                        purchase_data['status'] = 'rejected'
-                        # Você pode querer liberar os tokens de volta para 'available_tokens' aqui
-                        # ou lidar com a lógica de estoque de outra forma.
-                        # Por simplicidade, não liberaremos aqui, mas em um sistema real, seria crucial.
+                    if compra['status_compra'] != 'rejected':
+                        logging.warning(f"❌ Pagamento REJEITADO para Order ID: {external_reference}.")
+                        cur.execute("""
+                            UPDATE Adquiridos SET status_compra = 'rejected', payment_id_mp = %s, data_ultima_atualizacao = CURRENT_TIMESTAMP
+                            WHERE order_id_interno = %s;
+                        """, (str(payment_id_mp), external_reference))
+                        conn.commit()
                         discord_message = (
-                            f"💔 PAGAMENTO REJEITADO! 💔\n"
-                            f"Cliente: **{purchase_data['name']}** ({purchase_data['email']})\n"
-                            f"Tentou comprar: **{purchase_data['quantity']}** números\n"
-                            f"Total: **R${purchase_data['total_amount']:.2f}**\n"
-                            f"Status MP: REJEITADO\n"
-                            f"ID Pagamento MP: `{resource_id}`"
+                            f"💔 PAGAMENTO REJEITADO! 💔\nCliente: **{compra['nome_cliente']}** ({compra['email_cliente']})\nTentou comprar: **{compra['quantidade']}** números\nTotal: **R${compra['total_pago']:.2f}**\nStatus MP: REJEITADO\nID Pagamento MP: `{payment_id_mp}`"
                         )
-                        send_discord_notification(discord_message, color=15158332) # Cor vermelha de erro
+                        send_discord_notification(discord_message, color=15158332)
                     else:
-                        logging.info(f"ℹ️ Pagamento REJEITADO para Order ID: {external_reference}, mas já processado anteriormente. Status: {purchase_data['status']}.")
+                        logging.info(f"ℹ️ Pagamento REJEITADO para Order ID: {external_reference}, mas já processado anteriormente.")
                 elif payment_status == 'pending':
-                    logging.info(f"⏳ Pagamento PENDENTE para Order ID: {external_reference}. Aguardando confirmação.")
-                    purchase_data['status'] = 'pending'
-                    # Nenhuma ação imediata além de atualizar o status interno
-            else:
-                logging.warning(f"⚠️ Notificação de pagamento para external_reference '{external_reference}' não encontrada em nossos registros pendentes.")
-        # Sempre retorne 200 OK para o Mercado Pago, para que ele pare de reenviar a notificação
+                    if compra['status_compra'] != 'pending':
+                        cur.execute("""
+                            UPDATE Adquiridos SET status_compra = 'pending', payment_id_mp = %s, data_ultima_atualizacao = CURRENT_TIMESTAMP
+                            WHERE order_id_interno = %s;
+                        """, (str(payment_id_mp), external_reference))
+                        conn.commit()
+                        logging.info(f"⏳ Pagamento PENDENTE para Order ID: {external_reference}. Status atualizado.")
+                cur.close()
+                conn.close()
+            except Exception as e:
+                logging.error(f"❌ Erro ao processar webhook Mercado Pago: {e}")
+                if 'cur' in locals():
+                    cur.close()
+                if 'conn' in locals():
+                    conn.close()
         return "OK", 200
-    return "Method Not Allowed", 405 # Para outros métodos HTTP
+    return "Method Not Allowed", 405
 
-# Rota para a página de status de pagamento (retorno do Mercado Pago)
 @app.route('/payment_status')
 def payment_status():
     status = request.args.get('status')
     order_id = request.args.get('order_id')
-    preference_id = request.args.get('preference_id') # Adicional, pode vir em alguns fluxos
-
     logging.info(f"🌐 Cliente retornou da página de pagamento. Status: {status}, Order ID: {order_id}")
-
-    if order_id and order_id in pending_payments_data:
-        purchase_data = pending_payments_data[order_id]
-        if purchase_data['status'] == 'approved':
-            logging.info(f"Pagamento para Order ID '{order_id}' já está APROVADO. Redirecionando para sucesso.")
-            # Redireciona para a página de sucesso com os tokens.
-            return render_template('success.html', tokens=purchase_data['assigned_tokens'])
-        elif purchase_data['status'] == 'pending':
-            logging.info(f"Pagamento para Order ID '{order_id}' está PENDENTE. Exibindo mensagem ao usuário.")
-            return render_template('payment_pending.html') # Crie este template
-        elif purchase_data['status'] == 'rejected':
-            logging.warning(f"Pagamento para Order ID '{order_id}' foi REJEITADO. Exibindo mensagem ao usuário.")
-            return render_template('payment_rejected.html') # Crie este template
-    else:
-        logging.warning(f"Retorno de pagamento para Order ID '{order_id}' não encontrado ou inválido.")
-        # Caso o order_id não seja encontrado, ou para status desconhecidos
-        return render_template('payment_generic_status.html', status=status) # Crie este template genérico
+    if order_id:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        cur.execute("SELECT * FROM Adquiridos WHERE order_id_interno = %s;", (order_id,))
+        compra = cur.fetchone()
+        cur.close()
+        conn.close()
+        if compra:
+            if compra['status_compra'] == 'approved':
+                tokens = compra['tokens_numeros_db'].split(',') if compra['tokens_numeros_db'] else []
+                return render_template('success.html', tokens=tokens)
+            elif compra['status_compra'] == 'pending':
+                return render_template('payment_pending.html')
+            elif compra['status_compra'] == 'rejected':
+                return render_template('payment_rejected.html')
+    logging.warning(f"Retorno de pagamento para Order ID '{order_id}' não encontrado ou inválido.")
+    return render_template('payment_generic_status.html', status=status)
 
 @app.route('/success')
 def success():
