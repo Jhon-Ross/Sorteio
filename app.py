@@ -22,17 +22,14 @@ email_test_sent = False
 
 # Configuração do Flask-Mail usando variáveis de ambiente
 app.config['MAIL_SERVER'] = os.getenv('MAIL_SERVER')
-app.config['MAIL_PORT'] = int(os.getenv('MAIL_PORT', '587'))
-app.config['MAIL_USE_TLS'] = os.getenv('MAIL_USE_TLS', 'true').lower() == 'true'
+app.config['MAIL_PORT'] = int(os.getenv('MAIL_PORT'))
+app.config['MAIL_USE_TLS'] = os.getenv('MAIL_USE_TLS').lower() == 'true'
 app.config['MAIL_USERNAME'] = os.getenv('MAIL_USERNAME')
 app.config['MAIL_PASSWORD'] = os.getenv('MAIL_PASSWORD')
 app.config['MAIL_DEFAULT_SENDER'] = os.getenv('MAIL_DEFAULT_SENDER')
 
 # Pega a URL do webhook do Discord do .env
 DISCORD_WEBHOOK_URL = os.getenv('DISCORD_WEBHOOK_URL')
-
-# URL base da aplicação (para Railway ou outro provedor)
-BASE_URL = os.getenv('BASE_URL', 'https://sorteio-production.up.railway.app')
 
 # Configuração do Mercado Pago
 # Você precisará de suas credenciais de Produção e/ou Teste
@@ -122,11 +119,6 @@ def index():
     logging.info("🌐 Requisição recebida para a página inicial ('/').")
     return render_template('index.html')
 
-@app.route('/health')
-def health():
-    """Endpoint de health check para Railway e outros serviços"""
-    return {'status': 'ok', 'tokens_available': len(available_tokens)}, 200
-
 @app.route('/create_preference', methods=['POST'])
 def create_preference():
     logging.info("🛒 Requisição POST recebida para '/create_preference' para criar preferência de pagamento.")
@@ -210,12 +202,12 @@ def create_preference():
         "items": [item],
         "payer": payer,
         "external_reference": order_id, # Usado para linkar o pagamento do MP com sua compra interna
-        "notification_url": f"{BASE_URL}/mercadopago_webhook", # Sua URL para receber notificações do MP
+        "notification_url": f"https://sorteio-production.up.railway.app/mercadopago_webhook", # Sua URL para receber notificações do MP
         "auto_return": "all", # Retorna sempre, independente do status
         "back_urls": {
-            "success": f"{BASE_URL}/payment_status?status=success&order_id={order_id}",
-            "pending": f"{BASE_URL}/payment_status?status=pending&order_id={order_id}",
-            "failure": f"{BASE_URL}/payment_status?status=failure&order_id={order_id}"
+            "success": f"https://sorteio-production.up.railway.app/payment_status?status=success&order_id={order_id}",
+            "pending": f"https://sorteio-production.up.railway.app/payment_status?status=pending&order_id={order_id}",
+            "failure": f"https://sorteio-production.up.railway.app/payment_status?status=failure&order_id={order_id}"
         }
     }
 
@@ -405,20 +397,6 @@ def success():
 
 
 if __name__ == '__main__':
-    # Código de inicialização que estava executando no nível global
-    logging.info("🚀 Iniciando a aplicação Flask...")
-    logging.info("🛡️ Realizando verificações de segurança da aplicação...")
-    logging.info("🔍 Verificação: 'tokens.csv' encontrado.")
-    logging.info(f"📊 Verificação: {len(available_tokens)} tokens carregados de 'tokens.csv'.")
-    
-    # Verifica serviço de e-mail
-    if check_email_service():
-        discord_message = "🚀 Aplicação Flask iniciada com sucesso! Todos os serviços estão operacionais."
-        send_discord_notification(discord_message, color=3066993)
-    
-    # Configurações de produção
-    app.config['ENV'] = 'production'
-    app.config['DEBUG'] = False
-    
+    # ... (suas verificações e logs)
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host="0.0.0.0", port=port)
