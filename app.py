@@ -155,8 +155,8 @@ def send_discord_notification(message, color=None):
 
 @app.route('/')
 def index():
-    logging.info("🌐 Teste: Rota / acessada.")
-    return "Olá da Vercel! A rota principal funciona."
+    logging.info("🌐 Requisição recebida para a página inicial ('/').")
+    return render_template('index.html')
 
 @app.route('/create_preference', methods=['POST'])
 def create_preference():
@@ -336,15 +336,34 @@ def mercadopago_webhook():
                             msg_customer = Message(
                                 "Detalhes da sua Compra Confirmada - Sorteio do Carro",
                                 recipients=[compra['email_cliente']],
-                                body=f"""
-Prezado(a) {compra['nome_cliente']},\n\nSeu pagamento foi CONFIRMADO com sucesso!\nObrigado por participar do nosso sorteio!\n\nAqui estão os detalhes da sua compra:\nNome: {compra['nome_cliente']}\nEmail: {compra['email_cliente']}\nCPF: {compra['cpf_cliente']}\nTelefone: {compra['telefone_cliente']}\nQuantidade de números da sorte: {compra['quantidade']}\nSeus números da sorte: {compra['tokens_numeros_db']}\n\nBoa sorte!\n"
+                                body=(
+                                    f"Prezado(a) {compra['nome_cliente']},\n\n"
+                                    f"Seu pagamento foi CONFIRMADO com sucesso!\nObrigado por participar do nosso sorteio!\n\n"
+                                    f"Aqui estão os detalhes da sua compra:\n"
+                                    f"Nome: {compra['nome_cliente']}\n"
+                                    f"Email: {compra['email_cliente']}\n"
+                                    f"CPF: {compra['cpf_cliente']}\n"
+                                    f"Telefone: {compra['telefone_cliente']}\n"
+                                    f"Quantidade de números da sorte: {compra['quantidade']}\n"
+                                    f"Seus números da sorte: {compra['tokens_numeros_db']}\n\n"
+                                    f"Boa sorte!\n"
+                                )
                             )
                             mail.send(msg_customer)
                             msg_admin = Message(
                                 f"✅ Compra Confirmada - Sorteio do Carro - {compra['nome_cliente']}",
                                 recipients=[app.config['MAIL_DEFAULT_SENDER']],
-                                body=f"""
-COMPRA CONFIRMADA!\n\nCliente: {compra['nome_cliente']}\nEmail do Cliente: {compra['email_cliente']}\nCPF: {compra['cpf_cliente']}\nTelefone: {compra['telefone_cliente']}\nQuantidade de números comprados: {compra['quantidade']}\nTokens Atribuídos: {compra['tokens_numeros_db']}\nStatus do Pagamento (MP): APROVADO\nID do Pagamento (MP): {payment_id_mp}\n"
+                                body=(
+                                    f"COMPRA CONFIRMADA!\n\n"
+                                    f"Cliente: {compra['nome_cliente']}\n"
+                                    f"Email do Cliente: {compra['email_cliente']}\n"
+                                    f"CPF: {compra['cpf_cliente']}\n"
+                                    f"Telefone: {compra['telefone_cliente']}\n"
+                                    f"Quantidade de números comprados: {compra['quantidade']}\n"
+                                    f"Tokens Atribuídos: {compra['tokens_numeros_db']}\n"
+                                    f"Status do Pagamento (MP): APROVADO\n"
+                                    f"ID do Pagamento (MP): {payment_id_mp}\n"
+                                )
                             )
                             mail.send(msg_admin)
                             discord_message = (
