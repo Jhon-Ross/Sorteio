@@ -115,14 +115,15 @@ input {
     padding: 10px;
     margin-top: 10px;
     border-radius: 6px;
+    text-align: center; /* Centraliza o texto da mensagem */
 }
 
 #formMessage.error {
-    background-color: #e74c3c;
+    background-color: #e74c3c; /* Vermelho para erro */
     color: white;
 }
 
-#formMessage {
-    background-color: #2ecc71;
+#formMessage.success { /* Nova classe para mensagens de sucesso */
+    background-color: #2ecc71; /* Verde para sucesso */
     color: white;
 }

@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Status do Pagamento</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='assets/css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>Status do Pagamento Desconhecido</h1>
+        <p>O status do seu pagamento é: <strong>{{ status }}</strong>.</p>
+        <p>Por favor, aguarde a confirmação por e-mail ou entre em contato se tiver dúvidas.</p>
+        <a href="/" class="button">Voltar ao Início</a>
+    </div>
+</body>
+</html>

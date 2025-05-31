@@ -12,13 +12,19 @@
     <div class="container">
         <h1>Compra Concluída!</h1>
         <p>Seus números da sorte são:</p>
-        <ul>
-            {% for token in tokens %}
-            <li>{{ token }}</li>
-            {% endfor %}
+        <ul id="tokenList">
+            {% if tokens %}
+                {% for token in tokens %}
+                    <li>{{ token }}</li>
+                {% endfor %}
+            {% else %}
+                <li>Nenhum número da sorte encontrado.</li>
+            {% endif %}
         </ul>
         <p>Enviamos também para o seu e-mail.</p>
+        <a href="/" class="button">Voltar ao Início</a>
     </div>
-</body>
+
+    </body>
 
 </html>
