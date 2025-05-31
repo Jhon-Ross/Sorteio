@@ -35,58 +35,85 @@ DISCORD_WEBHOOK_URL = os.getenv('DISCORD_WEBHOOK_URL')
 # Você precisará de suas credenciais de Produção e/ou Teste
 # https://www.mercadopago.com.br/developers/panel/credentials
 app.config['MP_ACCESS_TOKEN'] = os.getenv('MP_ACCESS_TOKEN') # Seu Access Token do Mercado Pago
-sdk = mercadopago.SDK(app.config['MP_ACCESS_TOKEN'])
 
-mail = Mail(app)
+# Função para carregar tokens de forma lazy
+_available_tokens = None
+_used_tokens = set()
+def get_tokens():
+    global _available_tokens
+    if _available_tokens is None:
+        _available_tokens = []
+        try:
+            with open('tokens.csv', 'r') as csvfile:
+                reader = csv.reader(csvfile)
+                next(reader)
+                for row in reader:
+                    if row:
+                        _available_tokens.append(row[0])
+            logging.info(f"✅ Tokens carregados com sucesso! Total de {len(_available_tokens)} tokens disponíveis.")
+        except FileNotFoundError:
+            logging.error(f"❌ Erro: Arquivo 'tokens.csv' não encontrado.")
+        except Exception as e:
+            logging.error(f"⚠️ Erro ao carregar tokens do CSV: {e}")
+    return _available_tokens
 
-# Dicionário temporário para armazenar dados da compra enquanto o pagamento é processado.
-# ATENÇÃO: Em um ambiente de produção, isso DEVERIA ser um banco de dados persistente!
-# Formato: { 'payment_id_mercado_pago': { 'name': '', 'email': '', 'cpf': '', 'phone': '', 'quantity': 0, 'assigned_tokens': [], 'status': 'pending' } }
-pending_payments_data = {}
+def get_used_tokens():
+    global _used_tokens
+    return _used_tokens
 
-# Carrega tokens do CSV
-def load_tokens(filename="tokens.csv"):
-    logging.info(f"✨ Iniciando carregamento de tokens do arquivo: {filename}")
-    tokens = []
+# Função robusta para configurar Flask-Mail
+mail = None
+def configure_mail(app):
     try:
-        with open(filename, 'r') as csvfile:
-            reader = csv.reader(csvfile)
-            next(reader)
-            for row in reader:
-                if row:
-                    tokens.append(row[0])
-        logging.info(f"✅ Tokens carregados com sucesso! Total de {len(tokens)} tokens disponíveis.")
-    except FileNotFoundError:
-        logging.error(f"❌ Erro: Arquivo '{filename}' não encontrado. Certifique-se de que o arquivo 'tokens.csv' existe na raiz do projeto.")
+        required = ['MAIL_SERVER', 'MAIL_PORT', 'MAIL_USE_TLS', 'MAIL_USERNAME', 'MAIL_PASSWORD', 'MAIL_DEFAULT_SENDER']
+        for key in required:
+            if not app.config.get(key):
+                raise ValueError(f"Variável de ambiente obrigatória ausente: {key}")
+        return Mail(app)
     except Exception as e:
-        logging.error(f"⚠️ Erro ao carregar tokens do CSV: {e}")
-    return tokens
+        logging.error(f"❌ Erro ao configurar Flask-Mail: {e}")
+        return None
 
-available_tokens = load_tokens()
-used_tokens = set()
+mail = configure_mail(app)
 
-# Função para verificar o serviço de e-mail ao iniciar
+# Função robusta para verificar serviço de e-mail
+
 def check_email_service():
     global email_test_sent
-    if email_test_sent and app.debug:
-        logging.info("📧 E-mail de verificação já foi enviado e estamos em modo debug, ignorando novo envio.")
+    if email_test_sent:
+        logging.info("📧 E-mail de verificação já foi enviado.")
         return True
-
-    sender_email = app.config['MAIL_DEFAULT_SENDER']
-    logging.info(f"🚀 Iniciando verificação do serviço de e-mail para: {sender_email}")
+    if not mail:
+        logging.error("❌ Serviço de e-mail não configurado corretamente.")
+        return False
+    sender_email = app.config.get('MAIL_DEFAULT_SENDER')
+    if not sender_email:
+        logging.error("❌ MAIL_DEFAULT_SENDER não configurado.")
+        return False
     try:
         with app.app_context():
             msg = Message(subject="Verificação de E-mail - Sorteio do Carro",
                           recipients=[sender_email],
-                          body="Este é um e-mail de teste para verificar a configuração do seu serviço de e-mail para o Sorteio do Carro. Se você recebeu esta mensagem, o serviço está funcionando corretamente.")
+                          body="Este é um e-mail de teste para verificar a configuração do seu serviço de e-mail para o Sorteio do Carro.")
             mail.send(msg)
         logging.info(f"✅ E-mail de verificação enviado com sucesso para: {sender_email}.")
         email_test_sent = True
         return True
     except Exception as e:
         logging.error(f"❌ Falha na verificação do serviço de e-mail. Erro: {e}")
-        logging.warning("⚠️ Verifique suas configurações de e-mail no arquivo .env (MAIL_SERVER, MAIL_PORT, MAIL_USERNAME, MAIL_PASSWORD) e as permissões da sua conta (ex: Senha de App no Gmail).")
         return False
+
+# Inicialização do Mercado Pago SDK de forma segura
+def get_mp_sdk():
+    access_token = app.config.get('MP_ACCESS_TOKEN')
+    if not access_token:
+        logging.error('❌ MP_ACCESS_TOKEN não configurado!')
+        return None
+    try:
+        return mercadopago.SDK(access_token)
+    except Exception as e:
+        logging.error(f'❌ Erro ao inicializar Mercado Pago SDK: {e}')
+        return None
 
 # Função para enviar mensagem para o Discord Webhook
 def send_discord_notification(message, color=None):
@@ -143,7 +170,7 @@ def create_preference():
     # Atribui os tokens temporariamente para esta compra
     # IMPORTANT: Estes tokens SÓ SERÃO MARCADO COMO USADOS DEFINITIVAMENTE APÓS O PAGAMENTO SER APROVADO VIA IPN
     assigned_tokens = []
-    temp_available_for_purchase = list(set(available_tokens) - used_tokens)
+    temp_available_for_purchase = list(set(get_tokens()) - get_used_tokens())
 
     if len(temp_available_for_purchase) < quantity:
         logging.warning(f"⚠️ Não há tokens únicos suficientes disponíveis para criar a preferência ({quantity} solicitados).")
@@ -212,6 +239,7 @@ def create_preference():
     }
 
     try:
+        sdk = get_mp_sdk()
         preference_response = sdk.preference().create(preference_data)
         preference = preference_response["response"]
         payment_link = preference["init_point"] # Link para o checkout do Mercado Pago
@@ -247,6 +275,7 @@ def mercadopago_webhook():
 
         if topic == 'payment':
             # Detalhes do pagamento
+            sdk = get_mp_sdk()
             payment_info = sdk.payment().get(resource_id)
             payment_status = payment_info["response"]["status"]
             external_reference = payment_info["response"]["external_reference"] # Nosso order_id
@@ -263,8 +292,8 @@ def mercadopago_webhook():
 
                         # ATRIBUI OS TOKENS DEFINITIVAMENTE (marca como usados)
                         for token in purchase_data['assigned_tokens']:
-                            if token in available_tokens: # Verifica se o token ainda está disponível
-                                used_tokens.add(token) # Marca como usado globalmente
+                            if token in get_tokens(): # Verifica se o token ainda está disponível
+                                get_used_tokens().add(token) # Marca como usado globalmente
                                 available_tokens.remove(token) # Remove do pool de disponíveis
                                 logging.info(f"Token '{token}' marcado como USADO para Order ID: {external_reference}.")
                             else:
