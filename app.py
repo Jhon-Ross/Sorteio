@@ -8,6 +8,7 @@ import requests
 import json
 import mercadopago
 import psycopg2
+import psycopg2.extras # <--- ADICIONE ESTA LINHA
 
 # Carrega as variáveis do ambiente do arquivo .env
 load_dotenv()
