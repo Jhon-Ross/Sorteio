@@ -1,7 +1,7 @@
 import os
 import logging
 from dotenv import load_dotenv
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, redirect, url_for
 from flask_mail import Mail, Message
 import random
 import requests
@@ -393,37 +393,62 @@ def payment_status():
     order_id = request.args.get('order_id')
     logging.info(f"🌐 Cliente retornou da página de pagamento. Status: {status}, Order ID: {order_id}")
     if order_id:
-        conn = get_db_connection()
-        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-        cur.execute("SELECT * FROM Adquiridos WHERE order_id_interno = %s;", (order_id,))
-        compra = cur.fetchone()
-        cur.close()
-        conn.close()
+        conn = None
+        cur = None
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+            cur.execute("SELECT * FROM Adquiridos WHERE order_id_interno = %s;", (order_id,))
+            compra = cur.fetchone()
+        except Exception as e:
+            logging.error(f"❌ Erro ao buscar compra em /payment_status para order_id {order_id}: {e}")
+            compra = None
+        finally:
+            if cur:
+                cur.close()
+            if conn:
+                conn.close()
         if compra:
             if compra['status_compra'] == 'approved':
-                tokens = compra['tokens_numeros_db'].split(',') if compra['tokens_numeros_db'] else []
-                return render_template('success.html', tokens=tokens)
+                logging.info(f"Pagamento APROVADO para Order ID '{order_id}'. Redirecionando para /success.")
+                return redirect(url_for('success', order_id=compra['order_id_interno']))
             elif compra['status_compra'] == 'pending':
                 return render_template('payment_pending.html')
             elif compra['status_compra'] == 'rejected':
                 return render_template('payment_rejected.html')
-    logging.warning(f"Retorno de pagamento para Order ID '{order_id}' não encontrado ou inválido.")
+    logging.warning(f"Retorno de pagamento para Order ID '{order_id}' não encontrado, inválido ou status desconhecido: {status}.")
     return render_template('payment_generic_status.html', status=status)
 
 @app.route('/success')
 def success():
-    # Esta rota agora pode ser acessada diretamente após o IPN confirmar o pagamento
-    # (ou para onde `payment_status` redireciona quando aprovado)
-    # Os tokens virão do `payment_status` ou via `purchase_data`
-    tokens_json = request.args.get('tokens')
-    tokens = []
-    if tokens_json:
+    order_id = request.args.get('order_id')
+    tokens_adquiridos = []
+    nome_cliente = ""
+    if order_id:
+        conn = None
+        cur = None
         try:
-            tokens = json.loads(tokens_json)
-        except json.JSONDecodeError:
-            logging.error(f"Erro ao decodificar tokens JSON na página de sucesso: {tokens_json}")
-    logging.info("✔️ Requisição recebida para a página de sucesso ('/success').")
-    return render_template('success.html', tokens=tokens)
+            conn = get_db_connection()
+            cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+            cur.execute("SELECT nome_cliente, tokens_numeros_db FROM Adquiridos WHERE order_id_interno = %s AND status_compra = 'approved';", (order_id,))
+            compra_aprovada = cur.fetchone()
+            if compra_aprovada:
+                nome_cliente = compra_aprovada['nome_cliente']
+                if compra_aprovada['tokens_numeros_db']:
+                    tokens_adquiridos = compra_aprovada['tokens_numeros_db'].split(',')
+                logging.info(f"✔️ Página de sucesso carregada para Order ID: {order_id}. Tokens: {tokens_adquiridos}")
+            else:
+                logging.warning(f"⚠️ Tentativa de acesso à página de sucesso para Order ID: {order_id} não encontrado como 'approved' ou sem tokens.")
+        except Exception as e:
+            logging.error(f"❌ Erro ao buscar dados para página de sucesso (Order ID: {order_id}): {e}")
+        finally:
+            if cur:
+                cur.close()
+            if conn:
+                conn.close()
+    else:
+        logging.warning("⚠️ Página de sucesso acessada sem Order ID.")
+    return render_template('success.html', tokens=tokens_adquiridos, nome_cliente=nome_cliente)
 
 
 if __name__ == '__main__':

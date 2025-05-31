@@ -10,7 +10,13 @@
 
 <body>
     <div class="container">
-        <h1>Compra Concluída!</h1>
+        <h1>
+            {% if nome_cliente %}
+                Parabéns, {{ nome_cliente }}!
+            {% else %}
+                Compra Concluída!
+            {% endif %}
+        </h1>
         <p>Seus números da sorte são:</p>
         <ul id="tokenList">
             {% if tokens %}
@@ -18,7 +24,7 @@
                     <li>{{ token }}</li>
                 {% endfor %}
             {% else %}
-                <li>Nenhum número da sorte encontrado.</li>
+                <li>Nenhum número da sorte encontrado ou seu pedido ainda está sendo processado.</li>
             {% endif %}
         </ul>
         <p>Enviamos também para o seu e-mail.</p>
