@@ -250,13 +250,14 @@ def create_preference():
         "identification": {"type": "CPF", "number": cpf},
         "phone": {"area_code": phone[:2] if len(phone) >= 10 else "", "number": phone[2:] if len(phone) >= 10 else phone}
     }
-    # Definição robusta do base_url para produção Vercel
-    base_url = os.getenv('VERCEL_URL', 'http://127.0.0.1:5000')
-    if base_url and not base_url.startswith('http'):
-        base_url = f'https://{base_url}'
+    # Definição do base_url para produção Heroku ou local
+    # Para Heroku, defina a variável de ambiente APP_BASE_URL com a URL da sua aplicação (ex: https://seu-app.herokuapp.com)
+    base_url = os.getenv('APP_BASE_URL', 'http://127.0.0.1:5000')
     if base_url.startswith('http://127.0.0.1'):
-        logging.warning("Usando URL base local (http://127.0.0.1:5000). Webhook do Mercado Pago e retornos automáticos podem não funcionar corretamente sem um túnel HTTPS público (ex: ngrok) ou deploy.")
+        logging.warning("Usando URL base local (http://127.0.0.1:5000). Webhook do Mercado Pago e retornos automáticos podem não funcionar corretamente sem um túnel HTTPS público (ex: ngrok) ou deploy em produção.")
     else:
+        if not base_url.startswith('http://') and not base_url.startswith('https://'):
+            base_url = f'https://{base_url}'
         logging.info(f"Usando base_url: {base_url} para URLs do Mercado Pago.")
 
     preference_data = {
