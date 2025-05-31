@@ -1,6 +1,6 @@
-Flask
-python-dotenv
-Flask-Mail
-requests
-mercadopago
-gunicorn
+Flask==2.3.3
+python-dotenv==1.0.0
+Flask-Mail==0.9.1
+requests==2.31.0
+mercadopago==2.2.0
+gunicorn==21.2.0
