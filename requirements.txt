@@ -1,6 +1,9 @@
-Flask
-python-dotenv
-Flask-Mail
-requests
-mercadopago
-gunicorn
+Flask==3.0.2
+Flask-Mail==0.9.1
+python-dotenv==1.0.1
+requests==2.31.0
+mercadopago==2.2.1
+SQLAlchemy==2.0.41
+psycopg2-binary==2.9.10
+python-jose==3.3.0
+gunicorn==21.2.0

@@ -1,0 +1,30 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "app.py",
+      "use": "@vercel/python"
+    },
+    {
+      "src": "static/**",
+      "use": "@vercel/static"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/static/(.*)",
+      "dest": "/static/$1"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "app.py"
+    }
+  ],
+  "env": {
+    "PYTHONPATH": ".",
+    "PYTHONUNBUFFERED": "1",
+    "DATABASE_URL": "postgresql://postgres.uyozitkcewgxmifeqipc:vSUUkS7Kj87ibrbm@aws-0-sa-east-1.pooler.supabase.com:6543/postgres?sslmode=require",
+    "FLASK_ENV": "production",
+    "FLASK_DEBUG": "0"
+  }
+} 
