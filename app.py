@@ -404,14 +404,22 @@ def mercadopago_webhook():
                             try:
                                 print("Enviando notificação Discord...")
                                 discord_message = (
-                                    f"🎉 NOVA VENDA CONFIRMADA! 🎉\n\n"
-                                    f"🎫 **{len(tokens)} números** vendidos!\n"
-                                    f"💰 Total: **R${sum([t.total_amount for t in tokens]):.2f}**\n"
-                                    f"🎟️ Números: `{', '.join(token_numbers)}`\n\n"
-                                    f"👤 Comprador: **{first_token.owner_name}**\n"
-                                    f"📧 E-mail: {first_token.owner_email}\n"
-                                    f"✅ Status: **APROVADO**\n"
-                                    f"🔍 ID Pagamento: `{resource_id}`"
+                                    f"🎰 **NOVA VENDA CONFIRMADA!** 🎰\n\n"
+                                    f"**Detalhes da Compra:**\n"
+                                    f"━━━━━━━━━━━━━━━━━━\n"
+                                    f"🎫 Quantidade: **{len(tokens)} números**\n"
+                                    f"💰 Valor Total: **R$ {sum([t.total_amount for t in tokens]):.2f}**\n"
+                                    f"🎟️ Números da Sorte:\n`{', '.join(token_numbers)}`\n\n"
+                                    f"**Informações do Comprador:**\n"
+                                    f"━━━━━━━━━━━━━━━━━━\n"
+                                    f"👤 Nome: **{first_token.owner_name}**\n"
+                                    f"📧 E-mail: `{first_token.owner_email}`\n"
+                                    f"📱 Telefone: `{first_token.owner_phone}`\n\n"
+                                    f"**Status da Transação:**\n"
+                                    f"━━━━━━━━━━━━━━━━━━\n"
+                                    f"✅ Situação: **PAGAMENTO APROVADO**\n"
+                                    f"🔍 ID da Transação: `{resource_id}`\n"
+                                    f"⏰ Data: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
                                 )
                                 send_discord_notification(discord_message, color=3066993)
                                 print("Discord enviado!")
