@@ -722,3 +722,113 @@ input::placeholder {
         gap: 20px; /* Opcional: Aumentar um pouco o espaço entre os selos no desktop. */
     }
 }
+
+/* Estilos para as páginas de status de pagamento */
+.payment-status-card {
+    background: white;
+    border-radius: 10px;
+    padding: 2rem;
+    text-align: center;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    max-width: 600px;
+    margin: 2rem auto;
+}
+
+.status-icon {
+    font-size: 4rem;
+    margin-bottom: 1.5rem;
+}
+
+.status-icon.success {
+    color: #28a745;
+}
+
+.status-icon.pending {
+    color: #ffc107;
+}
+
+.status-icon.rejected {
+    color: #dc3545;
+}
+
+.status-icon.generic {
+    color: #17a2b8;
+}
+
+.status-badge {
+    display: inline-block;
+    padding: 0.5rem 1rem;
+    border-radius: 20px;
+    font-weight: 500;
+    margin-left: 0.5rem;
+}
+
+.status-badge.success {
+    background-color: #28a745;
+    color: white;
+}
+
+.status-badge.pending {
+    background-color: #ffc107;
+    color: #000;
+}
+
+.status-badge.rejected {
+    background-color: #dc3545;
+    color: white;
+}
+
+.status-badge.generic {
+    background-color: #17a2b8;
+    color: white;
+}
+
+.status-details {
+    margin: 2rem 0;
+    padding: 1rem;
+    background-color: #f8f9fa;
+    border-radius: 5px;
+}
+
+.tokens-list {
+    margin-top: 1.5rem;
+    text-align: left;
+}
+
+.tokens-list ul {
+    list-style: none;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    justify-content: center;
+}
+
+.tokens-list li {
+    background-color: #e9ecef;
+    padding: 0.5rem 1rem;
+    border-radius: 5px;
+    font-weight: 500;
+}
+
+.action-buttons {
+    margin-top: 2rem;
+}
+
+.btn {
+    display: inline-block;
+    padding: 0.75rem 1.5rem;
+    border-radius: 5px;
+    text-decoration: none;
+    font-weight: 500;
+    transition: all 0.3s ease;
+}
+
+.btn-primary {
+    background-color: #007bff;
+    color: white;
+}
+
+.btn-primary:hover {
+    background-color: #0056b3;
+}

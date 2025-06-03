@@ -14,7 +14,7 @@ from datetime import datetime
 # Carrega as variáveis do ambiente do arquivo .env
 load_dotenv()
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder='templates')
 
 # Configuração do Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -277,6 +277,12 @@ def mercadopago_webhook():
     print(f"Args: {request.args}")
     print(f"Data: {request.get_data(as_text=True)}")
     
+    # Verifica a assinatura do webhook
+    signature = request.headers.get('X-Signature')
+    if not signature:
+        logging.warning("⚠️ Webhook recebido sem assinatura")
+        return "Unauthorized", 401
+
     if request.method == 'GET':
         print(f"Webhook GET request: {request.args}")
         return "OK", 200
@@ -300,11 +306,19 @@ def mercadopago_webhook():
             if is_payment and resource_id:
                 print("=== PAGAMENTO DETECTADO ===")
                 if not sdk:
-                    print("ERRO: SDK do Mercado Pago não configurado")
-                    return "OK", 200
+                    logging.error("❌ SDK do Mercado Pago não configurado")
+                    return "Service Unavailable", 503
                     
                 print("Buscando informações do pagamento...")
-                payment_info = sdk.payment().get(resource_id)
+                try:
+                    payment_info = sdk.payment().get(resource_id)
+                    if not payment_info or "response" not in payment_info:
+                        logging.error("❌ Resposta inválida do Mercado Pago")
+                        return "Bad Gateway", 502
+                except Exception as e:
+                    logging.error(f"❌ Erro ao buscar informações do pagamento: {str(e)}")
+                    return "Bad Gateway", 502
+
                 print(f"Info do pagamento: {payment_info}")
                 
                 payment_status = payment_info["response"]["status"]
@@ -318,173 +332,220 @@ def mercadopago_webhook():
                     tokens = db.query(Token).filter_by(external_reference=external_reference).all()
                     print(f"Tokens encontrados: {len(tokens)}")
                     
-                    if tokens:
-                        if payment_status == 'approved':
-                            print("=== PAGAMENTO APROVADO ===")
-                            # Verifica se já está aprovado para evitar duplicidade
-                            if tokens[0].payment_status == 'approved':
-                                print("Pagamento já estava aprovado, evitando notificação duplicada.")
-                                return "OK", 200
+                    if not tokens:
+                        logging.warning(f"⚠️ Nenhum token encontrado para ref: {external_reference}")
+                        return "Not Found", 404
+                    
+                    if payment_status == 'approved':
+                        print("=== PAGAMENTO APROVADO ===")
+                        # Verifica se já está aprovado para evitar duplicidade
+                        if tokens[0].payment_status == 'approved':
+                            print("Pagamento já estava aprovado, evitando notificação duplicada.")
+                            return "OK", 200
+
+                        # Inicia uma transação para garantir atomicidade
+                        try:
                             for token in tokens:
                                 token.payment_status = 'approved'
                                 token.payment_id = resource_id
 
                             token_numbers = [token.number for token in tokens]
                             first_token = tokens[0]
-                            print(f"Preparando e-mails para {first_token.owner_email}")
-                            # Verificar configurações de e-mail
-                            print("Verificando config de e-mail...")
-                            mail_config = {
-                                'MAIL_SERVER': app.config.get('MAIL_SERVER'),
-                                'MAIL_PORT': app.config.get('MAIL_PORT'),
-                                'MAIL_USE_TLS': app.config.get('MAIL_USE_TLS'),
-                                'MAIL_USERNAME': app.config.get('MAIL_USERNAME'),
-                                'MAIL_DEFAULT_SENDER': app.config.get('MAIL_DEFAULT_SENDER')
-                            }
-                            print(f"Config e-mail: {mail_config}")
+
+                            # Envia e-mail para o cliente
                             try:
-                                print("=== ENVIANDO E-MAIL CLIENTE ===")
-                                # E-mail para o cliente
-                                customer_email_subject = "🎉 Parabéns! Sua Compra foi Confirmada - Sorteio do Carro"
-                                customer_email_body = f"""
-                                Parabéns, {first_token.owner_name}! 🎉
-
-                                Seu pagamento foi confirmado com sucesso e seus números da sorte já estão reservados! 
-
-                                🎫 Seus números da sorte são:
-                                {', '.join(token_numbers)}
-
-                                Guarde bem esses números! Eles são sua chance de ganhar um carro 0km. 🚗✨
-                                O sorteio será realizado pela Loteria Federal e o resultado será divulgado em nossas redes sociais.
-
-                                Fique atento e boa sorte! 🍀
-
-                                Atenciosamente,
-                                Equipe do Sorteio
-                                """
-                                print(f"Enviando e-mail cliente: {first_token.owner_email}")
-                                msg_customer = Message(
-                                    subject=customer_email_subject,
-                                    recipients=[first_token.owner_email],
-                                    body=customer_email_body
-                                )
-                                mail.send(msg_customer)
-                                print("E-mail cliente enviado!")
+                                send_customer_email(first_token, token_numbers)
                             except Exception as e:
-                                print(f"ERRO AO ENVIAR E-MAIL CLIENTE: {str(e)}")
-                                error_message = f"⚠️ ERRO AO ENVIAR E-MAIL CLIENTE!\n\nCliente: {first_token.owner_name}\nErro: {str(e)}"
-                                send_discord_notification(error_message, color=15158332)
-                            # Notificação Discord
+                                logging.error(f"❌ Erro ao enviar e-mail para cliente: {str(e)}")
+                                # Não falha a transação se o e-mail falhar
+
+                            # Envia notificação para o Discord
                             try:
-                                print("Enviando notificação Discord...")
-                                discord_message = (
-                                    f"🎰 **NOVA VENDA CONFIRMADA!** 🎰\n\n"
-                                    f"**Detalhes da Compra:**\n"
-                                    f"━━━━━━━━━━━━━━━━━━\n"
-                                    f"🎫 Quantidade: **{len(tokens)} números**\n"
-                                    f"💰 Valor Total: **R$ {sum([t.total_amount for t in tokens]):.2f}**\n"
-                                    f"🎟️ Números da Sorte:\n`{', '.join(token_numbers)}`\n\n"
-                                    f"**Informações do Comprador:**\n"
-                                    f"━━━━━━━━━━━━━━━━━━\n"
-                                    f"👤 Nome: **{first_token.owner_name}**\n"
-                                    f"📧 E-mail: `{first_token.owner_email}`\n"
-                                    f"📱 Telefone: `{first_token.owner_phone}`\n\n"
-                                    f"**Status da Transação:**\n"
-                                    f"━━━━━━━━━━━━━━━━━━\n"
-                                    f"✅ Situação: **PAGAMENTO APROVADO**\n"
-                                    f"🔍 ID da Transação: `{resource_id}`\n"
-                                    f"⏰ Data: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
-                                )
-                                send_discord_notification(discord_message, color=3066993)
-                                print("Discord enviado!")
+                                send_discord_notification_for_payment(tokens, resource_id)
                             except Exception as e:
-                                print(f"ERRO DISCORD: {str(e)}")
+                                logging.error(f"❌ Erro ao enviar notificação Discord: {str(e)}")
+                                # Não falha a transação se o Discord falhar
+
                             db.commit()
                             print("=== PROCESSO FINALIZADO COM SUCESSO ===")
-                        else:
-                            print(f"Status não aprovado: {payment_status}")
+                            return "OK", 200
+                        except Exception as e:
+                            db.rollback()
+                            logging.error(f"❌ Erro na transação: {str(e)}")
+                            return "Internal Server Error", 500
                     else:
-                        print(f"Nenhum token encontrado para ref: {external_reference}")
+                        logging.info(f"Status não aprovado: {payment_status}")
+                        return "OK", 200
                 except Exception as e:
                     db.rollback()
-                    print(f"ERRO NO BANCO: {str(e)}")
+                    logging.error(f"❌ Erro no banco de dados: {str(e)}")
+                    return "Internal Server Error", 500
                 finally:
                     db.close()
+            else:
+                logging.warning("⚠️ Notificação recebida não é de pagamento")
+                return "OK", 200
         except Exception as e:
-            print(f"ERRO GERAL: {str(e)}")
-            
-        return "OK", 200
+            logging.error(f"❌ Erro geral no webhook: {str(e)}")
+            return "Internal Server Error", 500
     return "Method Not Allowed", 405
+
+def send_customer_email(token, token_numbers):
+    """Função auxiliar para enviar e-mail ao cliente"""
+    customer_email_subject = "🎉 Parabéns! Sua Compra foi Confirmada - Sorteio do Carro"
+    customer_email_body = f"""
+    Parabéns, {token.owner_name}! 🎉
+
+    Seu pagamento foi confirmado com sucesso e seus números da sorte já estão reservados! 
+
+    🎫 Seus números da sorte são:
+    {', '.join(token_numbers)}
+
+    Guarde bem esses números! Eles são sua chance de ganhar um carro 0km. 🚗✨
+    O sorteio será realizado pela Loteria Federal e o resultado será divulgado em nossas redes sociais.
+
+    Fique atento e boa sorte! 🍀
+
+    Atenciosamente,
+    Equipe do Sorteio
+    """
+    msg_customer = Message(
+        subject=customer_email_subject,
+        recipients=[token.owner_email],
+        body=customer_email_body
+    )
+    mail.send(msg_customer)
+
+def send_discord_notification_for_payment(tokens, payment_id):
+    """Função auxiliar para enviar notificação ao Discord"""
+    token_numbers = [token.number for token in tokens]
+    first_token = tokens[0]
+    
+    discord_message = (
+        f"🎰 **NOVA VENDA CONFIRMADA!** 🎰\n\n"
+        f"**Detalhes da Compra:**\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"🎫 Quantidade: **{len(tokens)} números**\n"
+        f"💰 Valor Total: **R$ {sum([t.total_amount for t in tokens]):.2f}**\n"
+        f"🎟️ Números da Sorte:\n`{', '.join(token_numbers)}`\n\n"
+        f"**Informações do Comprador:**\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"👤 Nome: **{first_token.owner_name}**\n"
+        f"📧 E-mail: `{first_token.owner_email}`\n"
+        f"📱 Telefone: `{first_token.owner_phone}`\n\n"
+        f"**Status da Transação:**\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"✅ Situação: **PAGAMENTO APROVADO**\n"
+        f"🔍 ID da Transação: `{payment_id}`\n"
+        f"⏰ Data: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
+    )
+    send_discord_notification(discord_message, color=3066993)
 
 @app.route('/payment_status')
 def payment_status():
+    # Pega todos os parâmetros possíveis que o Mercado Pago pode enviar
     status = request.args.get('status')
     order_id = request.args.get('order_id')
     collection_status = request.args.get('collection_status')
     payment_id = request.args.get('payment_id')
     external_reference = request.args.get('external_reference')
+    preference_id = request.args.get('preference_id')
+    payment_type = request.args.get('payment_type')
+    merchant_order_id = request.args.get('merchant_order_id')
 
-    print("=== CLIENTE RETORNOU DO PAGAMENTO ===")
-    print(f"Status: {status}")
-    print(f"Order ID: {order_id}")
-    print(f"Collection Status: {collection_status}")
-    print(f"Payment ID: {payment_id}")
-    print(f"External Reference: {external_reference}")
+    logging.info("=== CLIENTE RETORNOU DO PAGAMENTO ===")
+    logging.info(f"Status: {status}")
+    logging.info(f"Order ID: {order_id}")
+    logging.info(f"Collection Status: {collection_status}")
+    logging.info(f"Payment ID: {payment_id}")
+    logging.info(f"External Reference: {external_reference}")
+    logging.info(f"Preference ID: {preference_id}")
+    logging.info(f"Payment Type: {payment_type}")
+    logging.info(f"Merchant Order ID: {merchant_order_id}")
 
-    # Usa order_id ou external_reference (dependendo de qual está disponível)
-    reference = order_id or external_reference
+    # Tenta encontrar a referência em qualquer um dos campos possíveis
+    reference = None
+    possible_references = [
+        order_id,
+        external_reference,
+        merchant_order_id,
+        preference_id
+    ]
     
+    for ref in possible_references:
+        if ref:
+            reference = ref
+            break
+
     if reference:
         db = SessionLocal()
         try:
-            print(f"Buscando tokens para referência: {reference}")
+            logging.info(f"Buscando tokens para referência: {reference}")
             # Busca o primeiro token da compra para verificar o status
             token = db.query(Token).filter_by(external_reference=reference).first()
             if token:
-                print(f"Token encontrado: {token.number}")
+                logging.info(f"Token encontrado: {token.number}")
                 # Verifica aprovação em qualquer um dos formatos possíveis
                 is_approved = (
                     collection_status == 'approved' or 
                     status == 'approved' or 
-                    token.payment_status == 'approved'
+                    token.payment_status == 'approved' or
+                    payment_type == 'credit_card' and status == 'success'
                 )
                 
                 is_rejected = (
                     collection_status == 'rejected' or 
                     status == 'rejected' or 
-                    token.payment_status == 'rejected'
+                    token.payment_status == 'rejected' or
+                    payment_type == 'credit_card' and status == 'failure'
                 )
 
                 if is_approved:
-                    print("=== PAGAMENTO APROVADO ===")
+                    logging.info("=== PAGAMENTO APROVADO ===")
                     # Atualiza o status no banco se necessário
                     if token.payment_status != 'approved':
-                        print("Atualizando status no banco...")
+                        logging.info("Atualizando status no banco...")
                         tokens = db.query(Token).filter_by(external_reference=reference).all()
                         for t in tokens:
                             t.payment_status = 'approved'
                             t.payment_id = payment_id
                         db.commit()
-                        print("Status atualizado com sucesso!")
+                        logging.info("Status atualizado com sucesso!")
                         
                     # Busca todos os tokens desta compra
                     tokens = db.query(Token).filter_by(external_reference=reference).all()
                     token_numbers = [t.number for t in tokens]
-                    print(f"Números da sorte: {token_numbers}")
+                    logging.info(f"Números da sorte: {token_numbers}")
                     return render_template('success.html', tokens=token_numbers)
                 elif is_rejected:
-                    print("=== PAGAMENTO REJEITADO ===")
+                    logging.info("=== PAGAMENTO REJEITADO ===")
+                    # Atualiza o status no banco se necessário
+                    if token.payment_status != 'rejected':
+                        tokens = db.query(Token).filter_by(external_reference=reference).all()
+                        for t in tokens:
+                            t.payment_status = 'rejected'
+                        db.commit()
                     return render_template('payment_rejected.html')
                 else:
-                    print("=== PAGAMENTO PENDENTE ===")
+                    logging.info("=== PAGAMENTO PENDENTE ===")
+                    # Atualiza o status no banco se necessário
+                    if token.payment_status != 'pending':
+                        tokens = db.query(Token).filter_by(external_reference=reference).all()
+                        for t in tokens:
+                            t.payment_status = 'pending'
+                        db.commit()
                     return render_template('payment_pending.html')
             else:
-                print(f"⚠️ Nenhum token encontrado para referência: {reference}")
+                logging.warning(f"⚠️ Nenhum token encontrado para referência: {reference}")
                 return render_template('payment_generic_status.html', status=status)
+        except Exception as e:
+            db.rollback()
+            logging.error(f"❌ Erro no banco de dados: {str(e)}")
+            return render_template('payment_generic_status.html', status='error')
         finally:
             db.close()
 
-    print("⚠️ Nenhuma referência de pedido encontrada")
+    logging.warning("⚠️ Nenhuma referência de pedido encontrada")
     return render_template('payment_generic_status.html', status=status)
 
 @app.route('/success')

@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pagamento Aprovado - Sorteio do Carro</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center">
+    <div class="bg-white p-8 rounded-lg shadow-lg max-w-md w-full mx-4">
+        <div class="text-center">
+            <div class="mb-6">
+                <i class="fas fa-check-circle text-4xl text-green-500"></i>
+            </div>
+            <h1 class="text-2xl font-bold text-gray-800 mb-4">Pagamento Aprovado!</h1>
+            <div class="bg-green-100 text-green-800 px-4 py-2 rounded-full inline-block mb-6">
+                <span class="font-semibold">Status: Aprovado</span>
+            </div>
+            <p class="text-gray-600 mb-6">
+                Parabéns! Seu pagamento foi aprovado com sucesso.
+                Você receberá um e-mail com os detalhes da sua compra.
+            </p>
+            <div class="bg-gray-50 p-4 rounded-lg mb-6">
+                <h3 class="text-lg font-semibold text-gray-800 mb-3">Seus Números da Sorte:</h3>
+                <div class="grid grid-cols-3 gap-2">
+                    {% for token in tokens %}
+                    <div class="bg-blue-100 text-blue-800 px-3 py-2 rounded text-center font-medium">
+                        {{ token }}
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="space-y-4">
+                <a href="/" class="block w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition duration-200 text-center">
+                    Voltar para a Página Inicial
+                </a>
+            </div>
+        </div>
+    </div>
+</body>
+</html> 
