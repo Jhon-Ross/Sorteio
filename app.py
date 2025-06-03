@@ -321,15 +321,17 @@ def mercadopago_webhook():
                     if tokens:
                         if payment_status == 'approved':
                             print("=== PAGAMENTO APROVADO ===")
+                            # Verifica se já está aprovado para evitar duplicidade
+                            if tokens[0].payment_status == 'approved':
+                                print("Pagamento já estava aprovado, evitando notificação duplicada.")
+                                return "OK", 200
                             for token in tokens:
                                 token.payment_status = 'approved'
                                 token.payment_id = resource_id
 
                             token_numbers = [token.number for token in tokens]
                             first_token = tokens[0]
-                            
                             print(f"Preparando e-mails para {first_token.owner_email}")
-                            
                             # Verificar configurações de e-mail
                             print("Verificando config de e-mail...")
                             mail_config = {
@@ -340,33 +342,8 @@ def mercadopago_webhook():
                                 'MAIL_DEFAULT_SENDER': app.config.get('MAIL_DEFAULT_SENDER')
                             }
                             print(f"Config e-mail: {mail_config}")
-                            
                             try:
-                                print("=== ENVIANDO E-MAILS ===")
-                                # E-mail para o administrador
-                                admin_email_subject = f"✅ Compra Confirmada - Sorteio do Carro - {first_token.owner_name}"
-                                admin_email_body = f"""
-                                COMPRA CONFIRMADA!
-
-                                Cliente: {first_token.owner_name}
-                                Email do Cliente: {first_token.owner_email}
-                                CPF: {first_token.owner_cpf}
-                                Telefone: {first_token.owner_phone}
-                                Quantidade de números comprados: {len(tokens)}
-                                Tokens Atribuídos: {', '.join(token_numbers)}
-                                Status do Pagamento (MP): APROVADO
-                                ID do Pagamento (MP): {resource_id}
-                                """
-                                
-                                print("Enviando e-mail admin...")
-                                msg_admin = Message(
-                                    subject=admin_email_subject,
-                                    recipients=[app.config['MAIL_DEFAULT_SENDER']],
-                                    body=admin_email_body
-                                )
-                                mail.send(msg_admin)
-                                print("E-mail admin enviado!")
-                                
+                                print("=== ENVIANDO E-MAIL CLIENTE ===")
                                 # E-mail para o cliente
                                 customer_email_subject = "🎉 Parabéns! Sua Compra foi Confirmada - Sorteio do Carro"
                                 customer_email_body = f"""
@@ -385,7 +362,6 @@ def mercadopago_webhook():
                                 Atenciosamente,
                                 Equipe do Sorteio
                                 """
-                                
                                 print(f"Enviando e-mail cliente: {first_token.owner_email}")
                                 msg_customer = Message(
                                     subject=customer_email_subject,
@@ -394,12 +370,10 @@ def mercadopago_webhook():
                                 )
                                 mail.send(msg_customer)
                                 print("E-mail cliente enviado!")
-                                
                             except Exception as e:
-                                print(f"ERRO AO ENVIAR E-MAILS: {str(e)}")
-                                error_message = f"⚠️ ERRO AO ENVIAR E-MAILS!\n\nCliente: {first_token.owner_name}\nErro: {str(e)}"
+                                print(f"ERRO AO ENVIAR E-MAIL CLIENTE: {str(e)}")
+                                error_message = f"⚠️ ERRO AO ENVIAR E-MAIL CLIENTE!\n\nCliente: {first_token.owner_name}\nErro: {str(e)}"
                                 send_discord_notification(error_message, color=15158332)
-                            
                             # Notificação Discord
                             try:
                                 print("Enviando notificação Discord...")
@@ -425,7 +399,6 @@ def mercadopago_webhook():
                                 print("Discord enviado!")
                             except Exception as e:
                                 print(f"ERRO DISCORD: {str(e)}")
-                            
                             db.commit()
                             print("=== PROCESSO FINALIZADO COM SUCESSO ===")
                         else:
