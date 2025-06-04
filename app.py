@@ -392,22 +392,22 @@ def mercadopago_webhook():
 
 def send_customer_email(token, token_numbers):
     """Função auxiliar para enviar e-mail ao cliente"""
-    customer_email_subject = "🎉 Parabéns! Sua Compra foi Confirmada - Sorteio do Carro"
+    customer_email_subject = "🎉 Parabéns! Sua Compra foi Confirmada - Rifa do Carro"
     customer_email_body = f"""
     Parabéns, {token.owner_name}! 🎉
 
-    Seu pagamento foi confirmado com sucesso e seus números da sorte já estão reservados! 
+    Seu pagamento foi confirmado com sucesso e seus números da rifa já estão reservados! 
 
-    🎫 Seus números da sorte são:
+    🎫 Seus números da rifa são:
     {', '.join(token_numbers)}
 
-    Guarde bem esses números! Eles são sua chance de ganhar um carro 0km. 🚗✨
-    O sorteio será realizado pela Loteria Federal e o resultado será divulgado em nossas redes sociais.
+    Guarde bem esses números! Eles são sua chance de ganhar o carro. 🚗✨
+    O sorteio será realizado em live após a venda das rifas e você será notificado por email quando for a hora.
 
-    Fique atento e boa sorte! 🍀
+    Fique atento ao seu email para não perder o sorteio! 📧
 
     Atenciosamente,
-    Equipe do Sorteio
+    Equipe da Rifa
     """
     msg_customer = Message(
         subject=customer_email_subject,

@@ -1,12 +1,25 @@
 import csv
 from database import create_tables, engine, Token, Base, SessionLocal
 import logging
+from sqlalchemy import text
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def reset_database():
     logging.info("🗑️ Removendo tabelas existentes...")
-    Base.metadata.drop_all(bind=engine)
+    with engine.connect() as conn:
+        # Desativa as constraints temporariamente
+        conn.execute(text("SET session_replication_role = 'replica';"))
+        
+        # Remove todas as tabelas
+        conn.execute(text("DROP TABLE IF EXISTS tokens CASCADE;"))
+        conn.execute(text("DROP TABLE IF EXISTS tokens_backup CASCADE;"))
+        conn.execute(text("DROP TABLE IF EXISTS purchases CASCADE;"))
+        conn.execute(text("DROP TABLE IF EXISTS purchases_backup CASCADE;"))
+        
+        # Reativa as constraints
+        conn.execute(text("SET session_replication_role = 'origin';"))
+        conn.commit()
     
     logging.info("📦 Criando novas tabelas...")
     create_tables()
