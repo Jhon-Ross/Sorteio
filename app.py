@@ -187,21 +187,18 @@ def create_preference():
             order_id = f"ORDER-{random.randint(100000, 999999)}"
             logging.info(f"Order ID gerado: {order_id}")
 
-            # Marca os tokens como utilizados e adiciona informações do comprador
+            # Reserva os tokens temporariamente
             for token in selected_tokens:
-                token.is_used = True
-                token.owner_name = name
-                token.owner_email = email
-                token.owner_cpf = cpf
-                token.owner_phone = phone
+                token.is_used = True  # Marca como usado temporariamente
                 token.external_reference = order_id
                 token.payment_status = 'pending'
-                token.total_amount = total_amount / quantity  # Divide o valor total pela quantidade
+                token.total_amount = total_amount / quantity
                 token.purchase_date = datetime.utcnow()
+                # Não registra os dados do cliente ainda
 
             # Cria o item para o Mercado Pago
             item = {
-                "title": f"Números da Sorte para Sorteio do Carro ({quantity} un.)",
+                "title": f"Números da Rifa do Carro ({quantity} un.)",
                 "quantity": 1,
                 "unit_price": total_amount,
                 "currency_id": "BRL",
@@ -242,7 +239,14 @@ def create_preference():
 
             if not sdk:
                 logging.error("❌ SDK do Mercado Pago não configurado!")
-                db.rollback()
+                # Libera os tokens se houver erro
+                for token in selected_tokens:
+                    token.is_used = False
+                    token.external_reference = None
+                    token.payment_status = None
+                    token.total_amount = None
+                    token.purchase_date = None
+                db.commit()
                 return jsonify({'success': False, 'message': 'Serviço de pagamento temporariamente indisponível.'}), 503
                 
             logging.info("Criando preferência no Mercado Pago...")
@@ -257,7 +261,14 @@ def create_preference():
 
         except Exception as e:
             if db:
-                db.rollback()
+                # Em caso de erro, libera os tokens
+                for token in selected_tokens:
+                    token.is_used = False
+                    token.external_reference = None
+                    token.payment_status = None
+                    token.total_amount = None
+                    token.purchase_date = None
+                db.commit()
             logging.error(f"❌ Erro ao criar preferência de pagamento: {str(e)}")
             logging.error(f"Traceback completo: {traceback.format_exc()}")
             return jsonify({'success': False, 'message': f'Erro ao iniciar pagamento: {str(e)}'}), 500
@@ -345,9 +356,18 @@ def mercadopago_webhook():
 
                         # Inicia uma transação para garantir atomicidade
                         try:
+                            # Busca os dados do pagamento
+                            payment_data = payment_info["response"]
+                            payer = payment_data.get("payer", {})
+                            
                             for token in tokens:
                                 token.payment_status = 'approved'
                                 token.payment_id = resource_id
+                                # Registra os dados do cliente apenas após aprovação
+                                token.owner_name = payer.get("name", "")
+                                token.owner_email = payer.get("email", "")
+                                token.owner_cpf = payer.get("identification", {}).get("number", "")
+                                token.owner_phone = payer.get("phone", {}).get("number", "")
 
                             token_numbers = [token.number for token in tokens]
                             first_token = tokens[0]
@@ -373,6 +393,21 @@ def mercadopago_webhook():
                             db.rollback()
                             logging.error(f"❌ Erro na transação: {str(e)}")
                             return "Internal Server Error", 500
+                    elif payment_status in ['rejected', 'cancelled', 'refunded']:
+                        print(f"=== PAGAMENTO {payment_status.upper()} ===")
+                        # Libera os tokens se o pagamento foi rejeitado/cancelado/reembolsado
+                        for token in tokens:
+                            token.is_used = False
+                            token.external_reference = None
+                            token.payment_status = None
+                            token.total_amount = None
+                            token.purchase_date = None
+                            token.owner_name = None
+                            token.owner_email = None
+                            token.owner_cpf = None
+                            token.owner_phone = None
+                        db.commit()
+                        return "OK", 200
                     else:
                         logging.info(f"Status não aprovado: {payment_status}")
                         return "OK", 200
