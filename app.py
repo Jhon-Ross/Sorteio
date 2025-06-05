@@ -208,18 +208,19 @@ def create_preference():
 
             # Dados do pagador
             payer = {
-                "name": name,
-                "surname": "",
+                "first_name": name.split()[0] if name else "",
+                "last_name": " ".join(name.split()[1:]) if name and len(name.split()) > 1 else "",
                 "email": email,
                 "identification": {
                     "type": "CPF",
-                    "number": cpf
+                    "number": cpf.replace(".", "").replace("-", "") if cpf else ""
                 },
                 "phone": {
                     "area_code": phone[:2] if len(phone) >= 10 else "",
                     "number": phone[2:] if len(phone) >= 10 else phone
                 }
             }
+            logging.info("=== DADOS DO PAGADOR ENVIADOS AO MP ===")
             logging.info(f"Dados do pagador: {payer}")
 
             # Cria a preferência de pagamento no Mercado Pago
@@ -360,15 +361,55 @@ def mercadopago_webhook():
                             payment_data = payment_info["response"]
                             payer = payment_data.get("payer", {})
                             
+                            # Log dos dados recebidos do Mercado Pago
+                            logging.info("=== DADOS DO PAGADOR RECEBIDOS ===")
+                            logging.info(f"Payer data: {payer}")
+                            logging.info(f"Nome: {payer.get('name')}")
+                            logging.info(f"Email: {payer.get('email')}")
+                            logging.info(f"CPF: {payer.get('identification', {}).get('number')}")
+                            logging.info(f"Telefone: {payer.get('phone', {}).get('number')}")
+                            
+                            # Atualiza os tokens com os dados do comprador
+                            updated_tokens = []
                             for token in tokens:
+                                # Primeiro, recarregamos o token do banco para garantir dados atualizados
+                                token = db.merge(token)
+                                
+                                # Atualiza os dados
                                 token.payment_status = 'approved'
                                 token.payment_id = resource_id
-                                # Registra os dados do cliente apenas após aprovação
-                                token.owner_name = payer.get("name", "")
+                                
+                                # Garante que os dados do cliente sejam salvos
+                                token.owner_name = payer.get("first_name", "") + " " + payer.get("last_name", "")
+                                if not token.owner_name.strip():
+                                    token.owner_name = payer.get("name", "")
+                                    
                                 token.owner_email = payer.get("email", "")
                                 token.owner_cpf = payer.get("identification", {}).get("number", "")
-                                token.owner_phone = payer.get("phone", {}).get("number", "")
+                                
+                                # Formata o telefone corretamente
+                                phone_area = payer.get("phone", {}).get("area_code", "")
+                                phone_number = payer.get("phone", {}).get("number", "")
+                                token.owner_phone = f"{phone_area}{phone_number}".strip()
+                                
+                                # Adiciona explicitamente à sessão
+                                db.add(token)
+                                updated_tokens.append(token)
+                                
+                                # Log após atualização
+                                logging.info("=== DADOS SALVOS NO TOKEN ===")
+                                logging.info(f"Token {token.number}:")
+                                logging.info(f"Nome: {token.owner_name}")
+                                logging.info(f"Email: {token.owner_email}")
+                                logging.info(f"CPF: {token.owner_cpf}")
+                                logging.info(f"Telefone: {token.owner_phone}")
 
+                            # Commit explícito
+                            db.commit()
+                            logging.info("=== DADOS SALVOS COM SUCESSO NO BANCO ===")
+
+                            # Usa os tokens atualizados para o restante do processo
+                            tokens = updated_tokens
                             token_numbers = [token.number for token in tokens]
                             first_token = tokens[0]
 
@@ -386,8 +427,6 @@ def mercadopago_webhook():
                                 logging.error(f"❌ Erro ao enviar notificação Discord: {str(e)}")
                                 # Não falha a transação se o Discord falhar
 
-                            db.commit()
-                            print("=== PROCESSO FINALIZADO COM SUCESSO ===")
                             return "OK", 200
                         except Exception as e:
                             db.rollback()
