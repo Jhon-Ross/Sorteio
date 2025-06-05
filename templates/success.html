@@ -3,40 +3,84 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pagamento Aprovado - Sorteio do Carro</title>
-    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <title>Pagamento Confirmado!</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            text-align: center;
+        }
+        .success-message {
+            color: #28a745;
+            font-size: 24px;
+            margin-bottom: 20px;
+        }
+        .token-list {
+            background-color: #f8f9fa;
+            padding: 20px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        .token-number {
+            font-size: 18px;
+            color: #007bff;
+            font-weight: bold;
+        }
+    </style>
 </head>
-<body class="bg-gray-100 min-h-screen flex items-center justify-center">
-    <div class="bg-white p-8 rounded-lg shadow-lg max-w-md w-full mx-4">
-        <div class="text-center">
-            <div class="mb-6">
-                <i class="fas fa-check-circle text-4xl text-green-500"></i>
-            </div>
-            <h1 class="text-2xl font-bold text-gray-800 mb-4">Pagamento Aprovado!</h1>
-            <div class="bg-green-100 text-green-800 px-4 py-2 rounded-full inline-block mb-6">
-                <span class="font-semibold">Status: Aprovado</span>
-            </div>
-            <p class="text-gray-600 mb-6">
-                Parabéns! Seu pagamento foi aprovado com sucesso.
-                Você receberá um e-mail com os detalhes da sua compra.
-            </p>
-            <div class="bg-gray-50 p-4 rounded-lg mb-6">
-                <h3 class="text-lg font-semibold text-gray-800 mb-3">Seus Números da Sorte:</h3>
-                <div class="grid grid-cols-3 gap-2">
-                    {% for token in tokens %}
-                    <div class="bg-blue-100 text-blue-800 px-3 py-2 rounded text-center font-medium">
-                        {{ token }}
-                    </div>
-                    {% endfor %}
-                </div>
-            </div>
-            <div class="space-y-4">
-                <a href="/" class="block w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition duration-200 text-center">
-                    Voltar para a Página Inicial
-                </a>
-            </div>
-        </div>
+<body>
+    <div class="success-message">
+        🎉 Parabéns! Seu pagamento foi confirmado com sucesso!
     </div>
+    
+    <div class="token-list">
+        <h3>Seus números da sorte são:</h3>
+        {% for token in tokens %}
+            <span class="token-number">{{ token }}</span>{% if not loop.last %}, {% endif %}
+        {% endfor %}
+    </div>
+
+    <p>
+        Guarde bem seus números! Você receberá um e-mail com a confirmação e seus números.
+        Boa sorte! 🍀
+    </p>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Recupera dados do localStorage
+            const clientData = {
+                name: localStorage.getItem('clientName'),
+                email: localStorage.getItem('clientEmail'),
+                cpf: localStorage.getItem('clientCPF'),
+                phone: localStorage.getItem('clientPhone'),
+                tokens: JSON.parse('{{ tokens|tojson|safe }}')
+            };
+
+            // Envia dados para o backend
+            fetch('/update_client_data', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(clientData)
+            })
+            .then(function(response) {
+                return response.json();
+            })
+            .then(function(data) {
+                console.log('Dados do cliente atualizados com sucesso:', data);
+                // Limpa o localStorage após sucesso
+                localStorage.removeItem('clientName');
+                localStorage.removeItem('clientEmail');
+                localStorage.removeItem('clientCPF');
+                localStorage.removeItem('clientPhone');
+            })
+            .catch(function(error) {
+                console.error('Erro ao atualizar dados do cliente:', error);
+            });
+        });
+    </script>
 </body>
 </html> 

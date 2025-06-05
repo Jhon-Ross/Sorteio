@@ -579,14 +579,60 @@ def payment_status():
                     # Atualiza o status no banco se necessário
                     if token.payment_status != 'approved':
                         logging.info("Atualizando status no banco...")
-                        tokens = db.query(Token).filter_by(external_reference=reference).all()
-                        for t in tokens:
-                            t.payment_status = 'approved'
-                            t.payment_id = payment_id
-                        db.commit()
-                        logging.info("Status atualizado com sucesso!")
-                        
-                    # Busca todos os tokens desta compra
+                        try:
+                            # Busca informações detalhadas do pagamento no Mercado Pago
+                            if payment_id and sdk:
+                                payment_info = sdk.payment().get(payment_id)
+                                if payment_info and "response" in payment_info:
+                                    payment_data = payment_info["response"]
+                                    payer = payment_data.get("payer", {})
+                                    
+                                    logging.info("=== DADOS DO PAGADOR RECEBIDOS ===")
+                                    logging.info(f"Payer data: {payer}")
+                                    
+                                    # Busca todos os tokens desta compra
+                                    tokens = db.query(Token).filter_by(external_reference=reference).all()
+                                    for t in tokens:
+                                        # Merge para garantir que o objeto está na sessão
+                                        t = db.merge(t)
+                                        
+                                        t.payment_status = 'approved'
+                                        t.payment_id = payment_id
+                                        
+                                        # Atualiza dados do cliente
+                                        t.owner_name = payer.get("first_name", "") + " " + payer.get("last_name", "")
+                                        if not t.owner_name.strip():
+                                            t.owner_name = payer.get("name", "")
+                                        
+                                        t.owner_email = payer.get("email", "")
+                                        t.owner_cpf = payer.get("identification", {}).get("number", "")
+                                        
+                                        # Formata o telefone
+                                        phone_area = payer.get("phone", {}).get("area_code", "")
+                                        phone_number = payer.get("phone", {}).get("number", "")
+                                        t.owner_phone = f"{phone_area}{phone_number}".strip()
+                                        
+                                        # Adiciona explicitamente à sessão
+                                        db.add(t)
+                                        
+                                        logging.info(f"Dados atualizados para token {t.number}:")
+                                        logging.info(f"Nome: {t.owner_name}")
+                                        logging.info(f"Email: {t.owner_email}")
+                                        logging.info(f"CPF: {t.owner_cpf}")
+                                        logging.info(f"Telefone: {t.owner_phone}")
+                                else:
+                                    logging.warning("Não foi possível obter dados do pagamento do Mercado Pago")
+                            else:
+                                logging.warning("Payment ID não disponível ou SDK não configurado")
+                                
+                            # Commit das alterações
+                            db.commit()
+                            logging.info("=== DADOS SALVOS COM SUCESSO NO BANCO ===")
+                        except Exception as e:
+                            logging.error(f"Erro ao atualizar dados do pagamento: {str(e)}")
+                            db.rollback()
+                            
+                    # Busca todos os tokens desta compra para exibição
                     tokens = db.query(Token).filter_by(external_reference=reference).all()
                     token_numbers = [t.number for t in tokens]
                     logging.info(f"Números da sorte: {token_numbers}")
@@ -736,6 +782,76 @@ Equipe do Sorteio
             'success': False,
             'error': str(e),
             'message': 'Erro ao executar testes de notificação.'
+        }), 500
+
+@app.route('/update_client_data', methods=['POST'])
+def update_client_data():
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'message': 'Dados não recebidos'}), 400
+
+        logging.info("=== RECEBENDO DADOS DO CLIENTE DO FRONTEND ===")
+        logging.info(f"Dados recebidos: {data}")
+
+        # Extrai os dados
+        name = data.get('name')
+        email = data.get('email')
+        cpf = data.get('cpf')
+        phone = data.get('phone')
+        tokens = data.get('tokens', [])
+
+        if not all([name, email, cpf, phone, tokens]):
+            return jsonify({'success': False, 'message': 'Dados incompletos'}), 400
+
+        db = SessionLocal()
+        try:
+            # Atualiza cada token com os dados do cliente
+            for token_number in tokens:
+                token = db.query(Token).filter_by(number=token_number).first()
+                if token:
+                    # Merge para garantir que o objeto está na sessão
+                    token = db.merge(token)
+                    
+                    # Atualiza dados do cliente
+                    token.owner_name = name
+                    token.owner_email = email
+                    token.owner_cpf = cpf
+                    token.owner_phone = phone
+                    
+                    # Adiciona explicitamente à sessão
+                    db.add(token)
+                    
+                    logging.info(f"Dados atualizados para token {token_number}:")
+                    logging.info(f"Nome: {token.owner_name}")
+                    logging.info(f"Email: {token.owner_email}")
+                    logging.info(f"CPF: {token.owner_cpf}")
+                    logging.info(f"Telefone: {token.owner_phone}")
+
+            # Commit das alterações
+            db.commit()
+            logging.info("=== DADOS SALVOS COM SUCESSO NO BANCO ===")
+            
+            return jsonify({
+                'success': True,
+                'message': 'Dados do cliente atualizados com sucesso'
+            })
+
+        except Exception as e:
+            db.rollback()
+            logging.error(f"Erro ao atualizar dados do cliente: {str(e)}")
+            return jsonify({
+                'success': False,
+                'message': f'Erro ao salvar dados: {str(e)}'
+            }), 500
+        finally:
+            db.close()
+
+    except Exception as e:
+        logging.error(f"Erro ao processar dados do cliente: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'Erro ao processar dados: {str(e)}'
         }), 500
 
 if __name__ == '__main__':
