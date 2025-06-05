@@ -7,7 +7,7 @@ import random
 import requests
 import json
 import mercadopago
-from database import SessionLocal, Token
+from database import SessionLocal, Token, Order
 import traceback
 from datetime import datetime
 
@@ -187,18 +187,24 @@ def create_preference():
             order_id = f"ORDER-{random.randint(100000, 999999)}"
             logging.info(f"Order ID gerado: {order_id}")
 
-            # Reserva os tokens temporariamente e salva os dados do cliente
+            # Cria o pedido
+            order = Order(
+                external_reference=order_id,
+                payment_status='pending',
+                total_amount=total_amount,
+                purchase_date=datetime.utcnow(),
+                customer_name=name,
+                customer_email=email,
+                customer_cpf=cpf,
+                customer_phone=phone
+            )
+            db.add(order)
+            db.flush()  # Para obter o ID do pedido
+
+            # Reserva os tokens e associa ao pedido
             for token in selected_tokens:
-                token.is_used = True  # Marca como usado temporariamente
-                token.external_reference = order_id
-                token.payment_status = 'pending'
-                token.total_amount = total_amount / quantity
-                token.purchase_date = datetime.utcnow()
-                # Salva os dados do cliente temporariamente
-                token.owner_name = name
-                token.owner_email = email
-                token.owner_cpf = cpf
-                token.owner_phone = phone
+                token.is_used = True
+                token.order_id = order.id
 
             # Cria o item para o Mercado Pago
             item = {
@@ -244,17 +250,11 @@ def create_preference():
 
             if not sdk:
                 logging.error("❌ SDK do Mercado Pago não configurado!")
-                # Libera os tokens se houver erro
+                # Libera os tokens e remove o pedido
                 for token in selected_tokens:
                     token.is_used = False
-                    token.external_reference = None
-                    token.payment_status = None
-                    token.total_amount = None
-                    token.purchase_date = None
-                    token.owner_name = None
-                    token.owner_email = None
-                    token.owner_cpf = None
-                    token.owner_phone = None
+                    token.order_id = None
+                db.delete(order)
                 db.commit()
                 return jsonify({'success': False, 'message': 'Serviço de pagamento temporariamente indisponível.'}), 503
                 
@@ -266,21 +266,22 @@ def create_preference():
             # Commit as alterações no banco de dados
             db.commit()
             logging.info(f"Preferência de pagamento criada com sucesso. ID: {preference['id']}")
-            return jsonify({'success': True, 'payment_link': payment_link, 'preference_id': preference['id']})
+            return jsonify({
+                'success': True, 
+                'payment_link': payment_link, 
+                'preference_id': preference['id'],
+                'order_id': order_id,
+                'tokens': [token.number for token in selected_tokens]
+            })
 
         except Exception as e:
             if db:
-                # Em caso de erro, libera os tokens
+                # Em caso de erro, libera os tokens e remove o pedido
                 for token in selected_tokens:
                     token.is_used = False
-                    token.external_reference = None
-                    token.payment_status = None
-                    token.total_amount = None
-                    token.purchase_date = None
-                    token.owner_name = None
-                    token.owner_email = None
-                    token.owner_cpf = None
-                    token.owner_phone = None
+                    token.order_id = None
+                if 'order' in locals():
+                    db.delete(order)
                 db.commit()
             logging.error(f"❌ Erro ao criar preferência de pagamento: {str(e)}")
             logging.error(f"Traceback completo: {traceback.format_exc()}")
@@ -352,115 +353,53 @@ def mercadopago_webhook():
 
                 db = SessionLocal()
                 try:
-                    print("Buscando tokens no banco...")
-                    tokens = db.query(Token).filter_by(external_reference=external_reference).all()
-                    print(f"Tokens encontrados: {len(tokens)}")
+                    print("Buscando pedido no banco...")
+                    order = db.query(Order).filter_by(external_reference=external_reference).first()
+                    print(f"Pedido encontrado: {order.id if order else None}")
                     
-                    if not tokens:
-                        logging.warning(f"⚠️ Nenhum token encontrado para ref: {external_reference}")
+                    if not order:
+                        logging.warning(f"⚠️ Nenhum pedido encontrado para ref: {external_reference}")
                         return "Not Found", 404
                     
                     if payment_status == 'approved':
                         print("=== PAGAMENTO APROVADO ===")
                         # Verifica se já está aprovado para evitar duplicidade
-                        if tokens[0].payment_status == 'approved':
+                        if order.payment_status == 'approved':
                             print("Pagamento já estava aprovado, evitando notificação duplicada.")
                             return "OK", 200
 
-                        # Inicia uma transação para garantir atomicidade
+                        # Atualiza o status do pedido
+                        order.payment_status = 'approved'
+                        order.payment_id = resource_id
+                        db.commit()
+
+                        # Envia e-mail para o cliente
                         try:
-                            # Busca os dados do pagamento
-                            payment_data = payment_info["response"]
-                            payer = payment_data.get("payer", {})
-                            
-                            # Log dos dados recebidos do Mercado Pago
-                            logging.info("=== DADOS DO PAGADOR RECEBIDOS ===")
-                            logging.info(f"Payer data: {payer}")
-                            logging.info(f"Nome: {payer.get('name')}")
-                            logging.info(f"Email: {payer.get('email')}")
-                            logging.info(f"CPF: {payer.get('identification', {}).get('number')}")
-                            logging.info(f"Telefone: {payer.get('phone', {}).get('number')}")
-                            
-                            # Atualiza os tokens com os dados do comprador
-                            updated_tokens = []
-                            for token in tokens:
-                                # Primeiro, recarregamos o token do banco para garantir dados atualizados
-                                token = db.merge(token)
-                                
-                                # Atualiza os dados
-                                token.payment_status = 'approved'
-                                token.payment_id = resource_id
-                                
-                                # Garante que os dados do cliente sejam salvos
-                                token.owner_name = payer.get("first_name", "") + " " + payer.get("last_name", "")
-                                if not token.owner_name.strip():
-                                    token.owner_name = payer.get("name", "")
-                                    
-                                token.owner_email = payer.get("email", "")
-                                token.owner_cpf = payer.get("identification", {}).get("number", "")
-                                
-                                # Formata o telefone corretamente
-                                phone_area = payer.get("phone", {}).get("area_code", "")
-                                phone_number = payer.get("phone", {}).get("number", "")
-                                token.owner_phone = f"{phone_area}{phone_number}".strip()
-                                
-                                # Adiciona explicitamente à sessão
-                                db.add(token)
-                                updated_tokens.append(token)
-                                
-                                # Log após atualização
-                                logging.info("=== DADOS SALVOS NO TOKEN ===")
-                                logging.info(f"Token {token.number}:")
-                                logging.info(f"Nome: {token.owner_name}")
-                                logging.info(f"Email: {token.owner_email}")
-                                logging.info(f"CPF: {token.owner_cpf}")
-                                logging.info(f"Telefone: {token.owner_phone}")
-
-                            # Commit explícito
-                            db.commit()
-                            logging.info("=== DADOS SALVOS COM SUCESSO NO BANCO ===")
-
-                            # Usa os tokens atualizados para o restante do processo
-                            tokens = updated_tokens
-                            token_numbers = [token.number for token in tokens]
-                            first_token = tokens[0]
-
-                            # Envia e-mail para o cliente
-                            try:
-                                send_customer_email(first_token, token_numbers)
-                            except Exception as e:
-                                logging.error(f"❌ Erro ao enviar e-mail para cliente: {str(e)}")
-                                # Não falha a transação se o e-mail falhar
-
-                            # Envia notificação para o Discord
-                            try:
-                                send_discord_notification_for_payment(tokens, resource_id)
-                            except Exception as e:
-                                logging.error(f"❌ Erro ao enviar notificação Discord: {str(e)}")
-                                # Não falha a transação se o Discord falhar
-
-                            return "OK", 200
+                            token_numbers = [token.number for token in order.tokens]
+                            send_customer_email_new(order, token_numbers)
                         except Exception as e:
-                            db.rollback()
-                            logging.error(f"❌ Erro na transação: {str(e)}")
-                            return "Internal Server Error", 500
+                            logging.error(f"❌ Erro ao enviar e-mail para cliente: {str(e)}")
+
+                        # Envia notificação para o Discord
+                        try:
+                            send_discord_notification_for_payment_new(order, resource_id)
+                        except Exception as e:
+                            logging.error(f"❌ Erro ao enviar notificação Discord: {str(e)}")
+
+                        return "OK", 200
                     elif payment_status in ['rejected', 'cancelled', 'refunded']:
                         print(f"=== PAGAMENTO {payment_status.upper()} ===")
-                        # Libera os tokens se o pagamento foi rejeitado/cancelado/reembolsado
-                        for token in tokens:
+                        # Libera os tokens e marca o pedido como rejeitado
+                        order.payment_status = payment_status
+                        for token in order.tokens:
                             token.is_used = False
-                            token.external_reference = None
-                            token.payment_status = None
-                            token.total_amount = None
-                            token.purchase_date = None
-                            token.owner_name = None
-                            token.owner_email = None
-                            token.owner_cpf = None
-                            token.owner_phone = None
+                            token.order_id = None
                         db.commit()
                         return "OK", 200
                     else:
                         logging.info(f"Status não aprovado: {payment_status}")
+                        order.payment_status = payment_status
+                        db.commit()
                         return "OK", 200
                 except Exception as e:
                     db.rollback()
@@ -476,11 +415,11 @@ def mercadopago_webhook():
             return "Internal Server Error", 500
     return "Method Not Allowed", 405
 
-def send_customer_email(token, token_numbers):
-    """Função auxiliar para enviar e-mail ao cliente"""
+def send_customer_email_new(order, token_numbers):
+    """Função auxiliar para enviar e-mail ao cliente usando o novo modelo Order"""
     customer_email_subject = "🎉 Parabéns! Sua Compra foi Confirmada - Rifa do Carro"
     customer_email_body = f"""
-    Parabéns, {token.owner_name}! 🎉
+    Parabéns, {order.customer_name}! 🎉
 
     Seu pagamento foi confirmado com sucesso e seus números da rifa já estão reservados! 
 
@@ -497,28 +436,27 @@ def send_customer_email(token, token_numbers):
     """
     msg_customer = Message(
         subject=customer_email_subject,
-        recipients=[token.owner_email],
+        recipients=[order.customer_email],
         body=customer_email_body
     )
     mail.send(msg_customer)
 
-def send_discord_notification_for_payment(tokens, payment_id):
-    """Função auxiliar para enviar notificação ao Discord"""
-    token_numbers = [token.number for token in tokens]
-    first_token = tokens[0]
+def send_discord_notification_for_payment_new(order, payment_id):
+    """Função auxiliar para enviar notificação ao Discord usando o novo modelo Order"""
+    token_numbers = [token.number for token in order.tokens]
     
     discord_message = (
         f"🎰 **NOVA VENDA CONFIRMADA!** 🎰\n\n"
         f"**Detalhes da Compra:**\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"🎫 Quantidade: **{len(tokens)} números**\n"
-        f"💰 Valor Total: **R$ {sum([t.total_amount for t in tokens]):.2f}**\n"
+        f"🎫 Quantidade: **{len(token_numbers)} números**\n"
+        f"💰 Valor Total: **R$ {order.total_amount:.2f}**\n"
         f"🎟️ Números da Sorte:\n`{', '.join(token_numbers)}`\n\n"
         f"**Informações do Comprador:**\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"👤 Nome: **{first_token.owner_name}**\n"
-        f"📧 E-mail: `{first_token.owner_email}`\n"
-        f"📱 Telefone: `{first_token.owner_phone}`\n\n"
+        f"👤 Nome: **{order.customer_name}**\n"
+        f"📧 E-mail: `{order.customer_email}`\n"
+        f"📱 Telefone: `{order.customer_phone}`\n\n"
         f"**Status da Transação:**\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"✅ Situação: **PAGAMENTO APROVADO**\n"
@@ -566,104 +504,74 @@ def payment_status():
     if reference:
         db = SessionLocal()
         try:
-            logging.info(f"Buscando tokens para referência: {reference}")
-            # Busca o primeiro token da compra para verificar o status
-            token = db.query(Token).filter_by(external_reference=reference).first()
-            if token:
-                logging.info(f"Token encontrado: {token.number}")
+            logging.info(f"Buscando pedido para referência: {reference}")
+            # Busca o pedido
+            order = db.query(Order).filter_by(external_reference=reference).first()
+            if order:
+                logging.info(f"Pedido encontrado: {order.id}")
                 # Verifica aprovação em qualquer um dos formatos possíveis
                 is_approved = (
                     collection_status == 'approved' or 
                     status == 'approved' or 
-                    token.payment_status == 'approved' or
+                    order.payment_status == 'approved' or
                     payment_type == 'credit_card' and status == 'success'
                 )
                 
                 is_rejected = (
                     collection_status == 'rejected' or 
                     status == 'rejected' or 
-                    token.payment_status == 'rejected' or
+                    order.payment_status == 'rejected' or
                     payment_type == 'credit_card' and status == 'failure'
                 )
 
                 if is_approved:
                     logging.info("=== PAGAMENTO APROVADO ===")
                     # Atualiza o status no banco se necessário
-                    if token.payment_status != 'approved':
+                    if order.payment_status != 'approved':
                         logging.info("Atualizando status no banco...")
                         try:
-                            # Busca informações detalhadas do pagamento no Mercado Pago
-                            if payment_id and sdk:
-                                payment_info = sdk.payment().get(payment_id)
-                                if payment_info and "response" in payment_info:
-                                    payment_data = payment_info["response"]
-                                    payer = payment_data.get("payer", {})
-                                    
-                                    logging.info("=== DADOS DO PAGADOR RECEBIDOS ===")
-                                    logging.info(f"Payer data: {payer}")
-                                    
-                                    # Busca todos os tokens desta compra
-                                    tokens = db.query(Token).filter_by(external_reference=reference).all()
-                                    for t in tokens:
-                                        # Merge para garantir que o objeto está na sessão
-                                        t = db.merge(t)
-                                        
-                                        t.payment_status = 'approved'
-                                        t.payment_id = payment_id
-                                        
-                                        # Se não tiver dados do cliente salvos, usa os do Mercado Pago
-                                        if not t.owner_name or not t.owner_email:
-                                            t.owner_name = payer.get("first_name", "") + " " + payer.get("last_name", "")
-                                            if not t.owner_name.strip():
-                                                t.owner_name = payer.get("name", "")
-                                            
-                                            t.owner_email = payer.get("email", "")
-                                            t.owner_cpf = payer.get("identification", {}).get("number", "")
-                                            
-                                            # Formata o telefone
-                                            phone_area = payer.get("phone", {}).get("area_code", "")
-                                            phone_number = payer.get("phone", {}).get("number", "")
-                                            t.owner_phone = f"{phone_area}{phone_number}".strip()
-                                        
-                                        # Adiciona explicitamente à sessão
-                                        db.add(t)
-                                else:
-                                    logging.warning("Não foi possível obter dados do pagamento do Mercado Pago")
-                            else:
-                                logging.warning("Payment ID não disponível ou SDK não configurado")
-                                
-                            # Commit das alterações
+                            order.payment_status = 'approved'
+                            order.payment_id = payment_id
                             db.commit()
-                            logging.info("=== DADOS SALVOS COM SUCESSO NO BANCO ===")
+
+                            # Envia e-mail para o cliente
+                            try:
+                                token_numbers = [token.number for token in order.tokens]
+                                send_customer_email_new(order, token_numbers)
+                            except Exception as e:
+                                logging.error(f"❌ Erro ao enviar e-mail para cliente: {str(e)}")
+
+                            # Envia notificação para o Discord
+                            try:
+                                send_discord_notification_for_payment_new(order, payment_id)
+                            except Exception as e:
+                                logging.error(f"❌ Erro ao enviar notificação Discord: {str(e)}")
+
                         except Exception as e:
-                            logging.error(f"Erro ao atualizar dados do pagamento: {str(e)}")
+                            logging.error(f"Erro ao atualizar status do pedido: {str(e)}")
                             db.rollback()
-                            
-                    # Busca todos os tokens desta compra para exibição
-                    tokens = db.query(Token).filter_by(external_reference=reference).all()
-                    token_numbers = [t.number for t in tokens]
+                            return render_template('payment_generic_status.html', status='error')
+
+                    # Busca os tokens para exibição
+                    token_numbers = [token.number for token in order.tokens]
                     logging.info(f"Números da sorte: {token_numbers}")
                     return render_template('success.html', tokens=token_numbers)
                 elif is_rejected:
                     logging.info("=== PAGAMENTO REJEITADO ===")
-                    # Atualiza o status no banco se necessário
-                    if token.payment_status != 'rejected':
-                        tokens = db.query(Token).filter_by(external_reference=reference).all()
-                        for t in tokens:
-                            t.payment_status = 'rejected'
-                        db.commit()
+                    # Libera os tokens e marca o pedido como rejeitado
+                    order.payment_status = 'rejected'
+                    for token in order.tokens:
+                        token.is_used = False
+                        token.order_id = None
+                    db.commit()
                     return render_template('payment_rejected.html')
                 else:
                     logging.info("=== PAGAMENTO PENDENTE ===")
-                    # Atualiza o status no banco se necessário
-                    if token.payment_status != 'pending':
-                        tokens = db.query(Token).filter_by(external_reference=reference).all()
-                        for t in tokens:
-                            t.payment_status = 'pending'
-                        db.commit()
+                    order.payment_status = 'pending'
+                    db.commit()
                     return render_template('payment_pending.html')
             else:
-                logging.warning(f"⚠️ Nenhum token encontrado para referência: {reference}")
+                logging.warning(f"⚠️ Nenhum pedido encontrado para referência: {reference}")
                 return render_template('payment_generic_status.html', status=status)
         except Exception as e:
             db.rollback()

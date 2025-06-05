@@ -1,6 +1,6 @@
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, relationship
 from sqlalchemy.pool import QueuePool
 import os
 from dotenv import load_dotenv
@@ -14,6 +14,9 @@ load_dotenv()
 
 # Configuração do banco de dados
 DATABASE_URL = os.getenv('DATABASE_URL')
+
+if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL não está configurada nas variáveis de ambiente!")
@@ -69,25 +72,35 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 # Cria a base declarativa
 Base = declarative_base()
 
+class Order(Base):
+    __tablename__ = "orders"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    external_reference = Column(String, unique=True, index=True)
+    payment_id = Column(String, unique=True, nullable=True)
+    payment_status = Column(String)
+    total_amount = Column(Float)
+    purchase_date = Column(DateTime)
+    
+    # Dados do cliente
+    customer_name = Column(String)
+    customer_email = Column(String)
+    customer_cpf = Column(String)
+    customer_phone = Column(String)
+    
+    # Relacionamento com os tokens
+    tokens = relationship("Token", back_populates="order")
+
 class Token(Base):
     __tablename__ = "tokens"
 
     id = Column(Integer, primary_key=True, index=True)
-    number = Column(String, unique=True, index=True, nullable=False)
+    number = Column(String, unique=True, index=True)
     is_used = Column(Boolean, default=False)
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=True)
     
-    # Dados do comprador (imutáveis após a compra)
-    owner_name = Column(String)
-    owner_email = Column(String)
-    owner_cpf = Column(String)
-    owner_phone = Column(String)
-    
-    # Dados do pagamento (imutáveis após a compra)
-    payment_id = Column(String)
-    payment_status = Column(String)
-    external_reference = Column(String, index=True)  # Adicionado index para melhorar performance
-    purchase_date = Column(DateTime, default=datetime.utcnow)
-    total_amount = Column(Float)
+    # Relacionamento com o pedido
+    order = relationship("Order", back_populates="tokens")
 
 def get_db(max_retries=3, retry_delay=1):
     """
