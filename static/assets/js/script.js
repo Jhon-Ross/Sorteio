@@ -133,6 +133,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
             showMessage('Gerando o pagamento seguro...', false);
 
+            // Salva os dados no localStorage antes de enviar
+            localStorage.setItem('clientName', nome);
+            localStorage.setItem('clientEmail', email);
+            localStorage.setItem('clientCPF', cpf);
+            localStorage.setItem('clientPhone', telefone);
+
             fetch('/create_preference', {
                 method: 'POST',
                 headers: {

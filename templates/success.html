@@ -49,6 +49,14 @@
 
     <script>
         document.addEventListener('DOMContentLoaded', function() {
+            // Log dos dados no localStorage
+            console.log('=== DADOS NO LOCALSTORAGE ===');
+            console.log('Nome:', localStorage.getItem('clientName'));
+            console.log('Email:', localStorage.getItem('clientEmail'));
+            console.log('CPF:', localStorage.getItem('clientCPF'));
+            console.log('Telefone:', localStorage.getItem('clientPhone'));
+            console.log('Tokens:', JSON.parse('{{ tokens|tojson|safe }}'));
+
             // Recupera dados do localStorage
             const clientData = {
                 name: localStorage.getItem('clientName'),
@@ -57,6 +65,15 @@
                 phone: localStorage.getItem('clientPhone'),
                 tokens: JSON.parse('{{ tokens|tojson|safe }}')
             };
+
+            console.log('=== DADOS A SEREM ENVIADOS ===');
+            console.log(clientData);
+
+            // Verifica se todos os dados estão presentes
+            if (!clientData.name || !clientData.email || !clientData.cpf || !clientData.phone) {
+                console.error('Dados incompletos no localStorage:', clientData);
+                return; // Não envia se estiver incompleto
+            }
 
             // Envia dados para o backend
             fetch('/update_client_data', {
@@ -70,12 +87,17 @@
                 return response.json();
             })
             .then(function(data) {
-                console.log('Dados do cliente atualizados com sucesso:', data);
-                // Limpa o localStorage após sucesso
-                localStorage.removeItem('clientName');
-                localStorage.removeItem('clientEmail');
-                localStorage.removeItem('clientCPF');
-                localStorage.removeItem('clientPhone');
+                console.log('Resposta do servidor:', data);
+                if (data.success) {
+                    // Limpa o localStorage após sucesso
+                    localStorage.removeItem('clientName');
+                    localStorage.removeItem('clientEmail');
+                    localStorage.removeItem('clientCPF');
+                    localStorage.removeItem('clientPhone');
+                    console.log('localStorage limpo com sucesso');
+                } else {
+                    console.error('Erro retornado pelo servidor:', data.message);
+                }
             })
             .catch(function(error) {
                 console.error('Erro ao atualizar dados do cliente:', error);
