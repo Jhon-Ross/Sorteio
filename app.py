@@ -187,14 +187,18 @@ def create_preference():
             order_id = f"ORDER-{random.randint(100000, 999999)}"
             logging.info(f"Order ID gerado: {order_id}")
 
-            # Reserva os tokens temporariamente
+            # Reserva os tokens temporariamente e salva os dados do cliente
             for token in selected_tokens:
                 token.is_used = True  # Marca como usado temporariamente
                 token.external_reference = order_id
                 token.payment_status = 'pending'
                 token.total_amount = total_amount / quantity
                 token.purchase_date = datetime.utcnow()
-                # Não registra os dados do cliente ainda
+                # Salva os dados do cliente temporariamente
+                token.owner_name = name
+                token.owner_email = email
+                token.owner_cpf = cpf
+                token.owner_phone = phone
 
             # Cria o item para o Mercado Pago
             item = {
@@ -247,6 +251,10 @@ def create_preference():
                     token.payment_status = None
                     token.total_amount = None
                     token.purchase_date = None
+                    token.owner_name = None
+                    token.owner_email = None
+                    token.owner_cpf = None
+                    token.owner_phone = None
                 db.commit()
                 return jsonify({'success': False, 'message': 'Serviço de pagamento temporariamente indisponível.'}), 503
                 
@@ -269,6 +277,10 @@ def create_preference():
                     token.payment_status = None
                     token.total_amount = None
                     token.purchase_date = None
+                    token.owner_name = None
+                    token.owner_email = None
+                    token.owner_cpf = None
+                    token.owner_phone = None
                 db.commit()
             logging.error(f"❌ Erro ao criar preferência de pagamento: {str(e)}")
             logging.error(f"Traceback completo: {traceback.format_exc()}")
@@ -599,27 +611,22 @@ def payment_status():
                                         t.payment_status = 'approved'
                                         t.payment_id = payment_id
                                         
-                                        # Atualiza dados do cliente
-                                        t.owner_name = payer.get("first_name", "") + " " + payer.get("last_name", "")
-                                        if not t.owner_name.strip():
-                                            t.owner_name = payer.get("name", "")
-                                        
-                                        t.owner_email = payer.get("email", "")
-                                        t.owner_cpf = payer.get("identification", {}).get("number", "")
-                                        
-                                        # Formata o telefone
-                                        phone_area = payer.get("phone", {}).get("area_code", "")
-                                        phone_number = payer.get("phone", {}).get("number", "")
-                                        t.owner_phone = f"{phone_area}{phone_number}".strip()
+                                        # Se não tiver dados do cliente salvos, usa os do Mercado Pago
+                                        if not t.owner_name or not t.owner_email:
+                                            t.owner_name = payer.get("first_name", "") + " " + payer.get("last_name", "")
+                                            if not t.owner_name.strip():
+                                                t.owner_name = payer.get("name", "")
+                                            
+                                            t.owner_email = payer.get("email", "")
+                                            t.owner_cpf = payer.get("identification", {}).get("number", "")
+                                            
+                                            # Formata o telefone
+                                            phone_area = payer.get("phone", {}).get("area_code", "")
+                                            phone_number = payer.get("phone", {}).get("number", "")
+                                            t.owner_phone = f"{phone_area}{phone_number}".strip()
                                         
                                         # Adiciona explicitamente à sessão
                                         db.add(t)
-                                        
-                                        logging.info(f"Dados atualizados para token {t.number}:")
-                                        logging.info(f"Nome: {t.owner_name}")
-                                        logging.info(f"Email: {t.owner_email}")
-                                        logging.info(f"CPF: {t.owner_cpf}")
-                                        logging.info(f"Telefone: {t.owner_phone}")
                                 else:
                                     logging.warning("Não foi possível obter dados do pagamento do Mercado Pago")
                             else:
