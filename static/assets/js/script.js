@@ -103,16 +103,31 @@ document.addEventListener('DOMContentLoaded', function() {
 
     if (confirmarDadosBtn) {
         confirmarDadosBtn.addEventListener('click', function() {
+            console.log('=== BOTÃO CONFIRMAR CLICADO ===');
+            
             const nomeInput = document.getElementById('nome');
             const emailInput = document.getElementById('email');
             const cpfInput = document.getElementById('cpf');
             const telefoneInput = document.getElementById('telefone');
+
+            console.log('Inputs encontrados:', {
+                nome: nomeInput ? 'sim' : 'não',
+                email: emailInput ? 'sim' : 'não',
+                cpf: cpfInput ? 'sim' : 'não',
+                telefone: telefoneInput ? 'sim' : 'não'
+            });
 
             // Verifica se os inputs existem antes de pegar o .value
             const nome = nomeInput ? nomeInput.value.trim() : '';
             const email = emailInput ? emailInput.value.trim() : '';
             const cpf = cpfInput ? cpfInput.value.trim() : '';
             const telefone = telefoneInput ? telefoneInput.value.trim() : '';
+
+            console.log('=== VALORES DOS CAMPOS ===');
+            console.log('Nome:', nome);
+            console.log('Email:', email);
+            console.log('CPF:', cpf);
+            console.log('Telefone:', telefone);
 
             if (!nome || !email || !cpf || !telefone) {
                 showMessage('Por favor, preencha todos os campos do formulário.', true);
@@ -133,23 +148,18 @@ document.addEventListener('DOMContentLoaded', function() {
 
             // Salva os dados no localStorage após validação e antes de qualquer chamada
             try {
-                console.log('=== SALVANDO DADOS NO LOCALSTORAGE ===');
-                console.log('Nome a salvar:', nome);
-                console.log('Email a salvar:', email);
-                console.log('CPF a salvar:', cpf);
-                console.log('Telefone a salvar:', telefone);
-
+                console.log('=== INICIANDO SALVAMENTO NO LOCALSTORAGE ===');
+                
                 // Limpa dados antigos
-                localStorage.removeItem('clientName');
-                localStorage.removeItem('clientEmail');
-                localStorage.removeItem('clientCPF');
-                localStorage.removeItem('clientPhone');
+                localStorage.clear(); // Limpa todo o localStorage para garantir
+                console.log('localStorage limpo');
 
                 // Salva novos dados
                 localStorage.setItem('clientName', nome);
                 localStorage.setItem('clientEmail', email);
                 localStorage.setItem('clientCPF', cpf);
                 localStorage.setItem('clientPhone', telefone);
+                console.log('Dados salvos no localStorage');
 
                 // Verifica se salvou
                 const savedName = localStorage.getItem('clientName');
@@ -166,6 +176,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (!savedName || !savedEmail || !savedCPF || !savedPhone) {
                     throw new Error('Falha ao salvar dados no localStorage');
                 }
+
+                console.log('=== DADOS SALVOS COM SUCESSO ===');
             } catch (error) {
                 console.error('Erro ao salvar dados:', error);
                 showMessage('Erro ao salvar seus dados. Por favor, tente novamente.', true);
@@ -173,6 +185,17 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             showMessage('Gerando o pagamento seguro...', false);
+
+            // Salva os dados novamente antes do fetch
+            try {
+                localStorage.setItem('clientName', nome);
+                localStorage.setItem('clientEmail', email);
+                localStorage.setItem('clientCPF', cpf);
+                localStorage.setItem('clientPhone', telefone);
+                console.log('Dados salvos novamente antes do fetch');
+            } catch (error) {
+                console.error('Erro ao salvar dados antes do fetch:', error);
+            }
 
             fetch('/create_preference', {
                 method: 'POST',
@@ -191,7 +214,38 @@ document.addEventListener('DOMContentLoaded', function() {
             .then(data => {
                 if (data.success) {
                     showMessage('Redirecionando para o Mercado Pago...', false);
-                    window.location.href = data.payment_link;
+                    
+                    // Salva os dados novamente antes do redirecionamento
+                    try {
+                        console.log('=== SALVANDO DADOS ANTES DO REDIRECIONAMENTO ===');
+                        localStorage.setItem('clientName', nome);
+                        localStorage.setItem('clientEmail', email);
+                        localStorage.setItem('clientCPF', cpf);
+                        localStorage.setItem('clientPhone', telefone);
+                        
+                        // Verifica se salvou
+                        const savedName = localStorage.getItem('clientName');
+                        const savedEmail = localStorage.getItem('clientEmail');
+                        const savedCPF = localStorage.getItem('clientCPF');
+                        const savedPhone = localStorage.getItem('clientPhone');
+
+                        console.log('=== VERIFICAÇÃO FINAL DOS DADOS ===');
+                        console.log('Nome salvo:', savedName);
+                        console.log('Email salvo:', savedEmail);
+                        console.log('CPF salvo:', savedCPF);
+                        console.log('Telefone salvo:', savedPhone);
+
+                        if (!savedName || !savedEmail || !savedCPF || !savedPhone) {
+                            throw new Error('Falha ao salvar dados antes do redirecionamento');
+                        }
+                        
+                        console.log('Dados salvos com sucesso, redirecionando...');
+                        window.location.href = data.payment_link;
+                    } catch (error) {
+                        console.error('Erro ao salvar dados antes do redirecionamento:', error);
+                        // Continua com o redirecionamento mesmo se falhar
+                        window.location.href = data.payment_link;
+                    }
                 } else {
                     showMessage(data.message || 'Ocorreu um erro ao gerar o pagamento.', true);
                 }
