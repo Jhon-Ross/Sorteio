@@ -131,13 +131,48 @@ document.addEventListener('DOMContentLoaded', function() {
                 return;
             }
 
-            showMessage('Gerando o pagamento seguro...', false);
+            // Salva os dados no localStorage após validação e antes de qualquer chamada
+            try {
+                console.log('=== SALVANDO DADOS NO LOCALSTORAGE ===');
+                console.log('Nome a salvar:', nome);
+                console.log('Email a salvar:', email);
+                console.log('CPF a salvar:', cpf);
+                console.log('Telefone a salvar:', telefone);
 
-            // Salva os dados no localStorage antes de enviar
-            localStorage.setItem('clientName', nome);
-            localStorage.setItem('clientEmail', email);
-            localStorage.setItem('clientCPF', cpf);
-            localStorage.setItem('clientPhone', telefone);
+                // Limpa dados antigos
+                localStorage.removeItem('clientName');
+                localStorage.removeItem('clientEmail');
+                localStorage.removeItem('clientCPF');
+                localStorage.removeItem('clientPhone');
+
+                // Salva novos dados
+                localStorage.setItem('clientName', nome);
+                localStorage.setItem('clientEmail', email);
+                localStorage.setItem('clientCPF', cpf);
+                localStorage.setItem('clientPhone', telefone);
+
+                // Verifica se salvou
+                const savedName = localStorage.getItem('clientName');
+                const savedEmail = localStorage.getItem('clientEmail');
+                const savedCPF = localStorage.getItem('clientCPF');
+                const savedPhone = localStorage.getItem('clientPhone');
+
+                console.log('=== VERIFICAÇÃO DOS DADOS SALVOS ===');
+                console.log('Nome salvo:', savedName);
+                console.log('Email salvo:', savedEmail);
+                console.log('CPF salvo:', savedCPF);
+                console.log('Telefone salvo:', savedPhone);
+
+                if (!savedName || !savedEmail || !savedCPF || !savedPhone) {
+                    throw new Error('Falha ao salvar dados no localStorage');
+                }
+            } catch (error) {
+                console.error('Erro ao salvar dados:', error);
+                showMessage('Erro ao salvar seus dados. Por favor, tente novamente.', true);
+                return;
+            }
+
+            showMessage('Gerando o pagamento seguro...', false);
 
             fetch('/create_preference', {
                 method: 'POST',

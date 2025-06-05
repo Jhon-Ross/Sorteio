@@ -49,59 +49,74 @@
 
     <script>
         document.addEventListener('DOMContentLoaded', function() {
-            // Log dos dados no localStorage
-            console.log('=== DADOS NO LOCALSTORAGE ===');
-            console.log('Nome:', localStorage.getItem('clientName'));
-            console.log('Email:', localStorage.getItem('clientEmail'));
-            console.log('CPF:', localStorage.getItem('clientCPF'));
-            console.log('Telefone:', localStorage.getItem('clientPhone'));
-            console.log('Tokens:', JSON.parse('{{ tokens|tojson|safe }}'));
+            function getStorageData() {
+                try {
+                    // Tenta recuperar dados do localStorage
+                    const clientData = {
+                        name: localStorage.getItem('clientName'),
+                        email: localStorage.getItem('clientEmail'),
+                        cpf: localStorage.getItem('clientCPF'),
+                        phone: localStorage.getItem('clientPhone'),
+                        tokens: JSON.parse('{{ tokens|tojson|safe }}')
+                    };
 
-            // Recupera dados do localStorage
-            const clientData = {
-                name: localStorage.getItem('clientName'),
-                email: localStorage.getItem('clientEmail'),
-                cpf: localStorage.getItem('clientCPF'),
-                phone: localStorage.getItem('clientPhone'),
-                tokens: JSON.parse('{{ tokens|tojson|safe }}')
-            };
+                    console.log('=== TENTANDO RECUPERAR DADOS DO LOCALSTORAGE ===');
+                    console.log('Nome recuperado:', clientData.name);
+                    console.log('Email recuperado:', clientData.email);
+                    console.log('CPF recuperado:', clientData.cpf);
+                    console.log('Telefone recuperado:', clientData.phone);
+                    console.log('Tokens:', clientData.tokens);
 
-            console.log('=== DADOS A SEREM ENVIADOS ===');
-            console.log(clientData);
+                    // Verifica se todos os dados necessários estão presentes
+                    if (!clientData.name || !clientData.email || !clientData.cpf || !clientData.phone) {
+                        console.error('Dados incompletos no localStorage:', clientData);
+                        return null;
+                    }
 
-            // Verifica se todos os dados estão presentes
-            if (!clientData.name || !clientData.email || !clientData.cpf || !clientData.phone) {
-                console.error('Dados incompletos no localStorage:', clientData);
-                return; // Não envia se estiver incompleto
+                    return clientData;
+                } catch (error) {
+                    console.error('Erro ao recuperar dados do localStorage:', error);
+                    return null;
+                }
             }
 
-            // Envia dados para o backend
-            fetch('/update_client_data', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(clientData)
-            })
-            .then(function(response) {
-                return response.json();
-            })
-            .then(function(data) {
-                console.log('Resposta do servidor:', data);
-                if (data.success) {
-                    // Limpa o localStorage após sucesso
-                    localStorage.removeItem('clientName');
-                    localStorage.removeItem('clientEmail');
-                    localStorage.removeItem('clientCPF');
-                    localStorage.removeItem('clientPhone');
-                    console.log('localStorage limpo com sucesso');
-                } else {
-                    console.error('Erro retornado pelo servidor:', data.message);
-                }
-            })
-            .catch(function(error) {
-                console.error('Erro ao atualizar dados do cliente:', error);
-            });
+            function sendDataToServer(clientData) {
+                fetch('/update_client_data', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(clientData)
+                })
+                .then(function(response) {
+                    return response.json();
+                })
+                .then(function(data) {
+                    console.log('Resposta do servidor:', data);
+                    if (data.success) {
+                        // Limpa o localStorage apenas se o servidor confirmar sucesso
+                        localStorage.removeItem('clientName');
+                        localStorage.removeItem('clientEmail');
+                        localStorage.removeItem('clientCPF');
+                        localStorage.removeItem('clientPhone');
+                        console.log('localStorage limpo com sucesso');
+                    } else {
+                        console.error('Erro retornado pelo servidor:', data.message);
+                    }
+                })
+                .catch(function(error) {
+                    console.error('Erro ao enviar dados para o servidor:', error);
+                });
+            }
+
+            // Tenta recuperar e enviar os dados
+            const clientData = getStorageData();
+            if (clientData) {
+                console.log('Dados recuperados com sucesso, enviando para o servidor...');
+                sendDataToServer(clientData);
+            } else {
+                console.error('Não foi possível recuperar os dados do cliente do localStorage');
+            }
         });
     </script>
 </body>
